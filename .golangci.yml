@@ -1,0 +1,102 @@
+version: "2"
+run:
+  go: 1.26.1
+  modules-download-mode: vendor
+output:
+  path-mode: abs
+  formats:
+    text:
+      path: stdout
+linters:
+  default: all
+  disable:
+    - noinlineerr
+    - gochecknoglobals
+    - gochecknoinits
+    - ireturn
+    - testpackage
+    - nonamedreturns
+    - tagliatelle
+    - containedctx
+    - wsl
+    - gomodguard
+  settings:
+    varnamelen:
+      min-name-length: 2
+      # Ignore "ok" variables that hold the bool return value of a type assertion.
+      ignore-type-assert-ok: true
+      # Ignore "ok" variables that hold the bool return value of a map index.
+      ignore-map-index-ok: true
+      # Ignore "ok" variables that hold the bool return value of a channel receive.
+      ignore-chan-recv-ok: true
+      # Optional list of variable names that should be ignored completely.
+      ignore-names:
+        - err
+    mnd:
+      ignored-numbers:
+        - "0"
+        - "1"
+        - "2"
+    dupl:
+      threshold: 200
+    errcheck:
+      check-blank: true
+    gocyclo:
+      min-complexity: 7
+    govet:
+      disable:
+        - fieldalignment
+      enable-all: true
+    lll:
+      line-length: 120
+    nakedret:
+      max-func-lines: 60
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    rules:
+      - linters:
+          - lll
+        source: '^//go:generate '
+    paths:
+      - bin$
+      - api$
+      - build$
+      - configs$
+      - deployments$
+      - docs$
+      - githooks$
+      - init$
+      - third_party$
+      - tools$
+      - vendor$
+      - \.git$
+      - third_party$
+      - builtin$
+      - examples$
+formatters:
+  enable:
+    - gofmt
+    - gofumpt
+    - goimports
+  exclusions:
+    generated: lax
+    paths:
+      - bin$
+      - api$
+      - build$
+      - configs$
+      - deployments$
+      - docs$
+      - githooks$
+      - init$
+      - tools$
+      - vendor$
+      - \.git$
+      - third_party$
+      - builtin$
+      - examples$
