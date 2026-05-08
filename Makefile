@@ -19,11 +19,10 @@ fmt:
 
 install-lint:
 	@mkdir -p $(CURDIR)/bin
-	@curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/$(GOLANGCI_LINT_VERSION)/install.sh | sh -s -- -b $(CURDIR)/bin $(GOLANGCI_LINT_VERSION)
+	@curl -sSfL https://golangci-lint.run/install.sh | sh -s -- -d -b $(CURDIR)/bin $(GOLANGCI_LINT_VERSION)
 
 $(GOLANGCI_LINT):
 	@$(MAKE) install-lint
-
 
 lint: $(GOLANGCI_LINT)
 	$(GOLANGCI_LINT) run ./...
@@ -34,11 +33,11 @@ lint-fix: $(GOLANGCI_LINT)
 test:
 	$(GO) test ./...
 
+.PHONY: tidy
 tidy:
 	$(GO) mod tidy
 
 ci: fmt lint test
-
 
 clean:
 	rm -rf $(CURDIR)/bin

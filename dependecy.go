@@ -15,9 +15,9 @@ type onceProvider[instance any, args any] struct {
 	provider Provider[instance, args]
 }
 
-func (o *onceProvider[instance, dependencies]) GetInstance(ctx context.Context, dependencies dependencies) instance {
+func (o *onceProvider[instance, dependencies]) GetInstance(ctx context.Context, deps dependencies) instance {
 	if o.instance == nil {
-		o.instance = new(o.provider.GetInstance(ctx, dependencies))
+		o.instance = new(o.provider.GetInstance(ctx, deps))
 	}
 
 	return *o.instance
