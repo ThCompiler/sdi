@@ -40,23 +40,16 @@ func newDependencyGraph() *dependencyGraph {
 	}
 }
 
-func instanceTypes(dependencyType reflect.Type) []reflect.Type {
-	types := []reflect.Type{dependencyType}
-
-	if dependencyType.Kind() == reflect.Pointer {
-		types = append(types, dependencyType.Elem())
-	}
-
-	return types
-}
-
+// addInstance registers a node for info.instanceType and connects it to existing
+// dependency nodes.
+//
+// The graph is acyclic by construction for successful registrations:
+// a node can only reference dependency types that have already been added.
+// This enforces a topological order of registrations, therefore a cycle cannot
+// be created through addInstance.
 func (g *dependencyGraph) addInstance(info instanceInfo, dependenciesTypes []reflect.Type) error {
-	registeredTypes := instanceTypes(info.instanceType)
-
-	for _, tp := range registeredTypes {
-		if _, exists := g.nodes[tp]; exists {
-			return fmt.Errorf("dependency type %v: %w", tp, ErrDependencyAlreadyExists)
-		}
+	if _, exists := g.nodes[info.instanceType]; exists {
+		return fmt.Errorf("dependency type %v: %w", info.instanceType, ErrDependencyAlreadyExists)
 	}
 
 	instanceNode := &node{
@@ -64,9 +57,7 @@ func (g *dependencyGraph) addInstance(info instanceInfo, dependenciesTypes []ref
 		dependencies: make([]*node, 0, len(dependenciesTypes)),
 	}
 
-	for _, tp := range registeredTypes {
-		g.nodes[tp] = instanceNode
-	}
+	g.nodes[info.instanceType] = instanceNode
 
 	for _, dependencyType := range dependenciesTypes {
 		dependencyNode, exists := g.nodes[dependencyType]
@@ -95,7 +86,18 @@ const (
 	grey
 )
 
-func visit(from *node, visitor func(current *node)) {
+// visit traverses the graph starting from `from` in depth-first order.
+//
+// It is an iterative DFS with a color map:
+// grey marks nodes on the current stack, black marks fully processed nodes.
+// When a grey node is seen again, a dependency cycle exists and visit panics.
+//
+// visitor is called in postorder (after all dependencies of a node have been
+// pushed and processed). If visitor returns an error, traversal stops and the
+// error is wrapped with the current node type.
+//
+//nolint:gocyclo // keep the full traversal loop in one place for readability
+func visit(from *node, visitor func(current *node) error) error {
 	seen := make(map[*node]color)
 	stack := []*node{from}
 
@@ -106,7 +108,9 @@ func visit(from *node, visitor func(current *node)) {
 			stack = stack[:len(stack)-1]
 			seen[top] = black
 
-			visitor(top)
+			if err := visitor(top); err != nil {
+				return fmt.Errorf("visit node %v: %w", top.Type(), err)
+			}
 
 			continue
 		}
@@ -117,6 +121,11 @@ func visit(from *node, visitor func(current *node)) {
 			clr, ok := seen[dep]
 			switch {
 			case ok && clr == grey:
+				// The graph is acyclic by construction for successful registrations:
+				// a node can only reference dependency types that have already been added.
+				// This enforces a topological order of registrations, therefore a cycle cannot
+				// be created through addInstance.
+				// So it's imposible way, but needed to info developer about cycle in case of wrong graph construction.
 				panic(fmt.Errorf("type %v: %w", dep.Type(), ErrDependencyCycle))
 			case !ok:
 				stack = append(stack, dep)
@@ -124,7 +133,7 @@ func visit(from *node, visitor func(current *node)) {
 		}
 	}
 
-	return
+	return nil
 }
 
 type dependencyTree struct {
@@ -137,26 +146,30 @@ func newTree(from *node) *dependencyTree {
 	}
 }
 
-func (tree *dependencyTree) walkOverDependencies(visitor func(instanceInfo)) {
-	visit(tree.root, func(n *node) {
-		visitor(n.info)
-	})
-}
-
-func (tree *dependencyTree) WriteTo(w io.Writer) (int64, error) {
+func (tree *dependencyTree) WriteTo(writer io.Writer) (int64, error) {
 	var buf strings.Builder
 
-	visit(tree.root, func(n *node) {
+	err := visit(tree.root, func(n *node) error {
 		for _, dep := range n.dependencies {
 			buf.WriteString(n.Type())
-			buf.WriteString(" ")
+			buf.WriteString(" --> ")
 			buf.WriteString(dep.Type())
 			buf.WriteByte('\n')
-
 		}
-	})
 
-	res, err := w.Write([]byte(buf.String()))
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+
+	res, err := writer.Write([]byte(buf.String()))
 
 	return int64(res), err
+}
+
+func (tree *dependencyTree) walkOverDependencies(visitor func(instanceInfo) error) error {
+	return visit(tree.root, func(n *node) error {
+		return visitor(n.info)
+	})
 }

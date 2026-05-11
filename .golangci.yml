@@ -1,6 +1,6 @@
 version: "2"
 run:
-  go: 1.26.1
+  go: 1.25.7
   modules-download-mode: vendor
 output:
   path-mode: abs
@@ -10,6 +10,7 @@ output:
 linters:
   default: all
   disable:
+    - depguard
     - noinlineerr
     - gochecknoglobals
     - gochecknoinits
@@ -33,6 +34,7 @@ linters:
       # Optional list of variable names that should be ignored completely.
       ignore-names:
         - err
+        - i
     mnd:
       ignored-numbers:
         - "0"

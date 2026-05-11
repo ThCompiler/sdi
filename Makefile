@@ -2,21 +2,11 @@ GO ?= go
 GOLANGCI_LINT_VERSION ?= v2.12.1
 GOLANGCI_LINT ?= $(CURDIR)/bin/golangci-lint
 
-.PHONY: help fmt lint test tidy ci install-lint clean
+.PHONY: install
+install:
+	$(GO) install tool
 
-help:
-	@printf '%s\n' \
-		'make fmt          - run gofmt' \
-		'make lint         - run golangci-lint' \
-		'make test         - run go test ./...' \
-		'make tidy         - run go mod tidy' \
-		'make ci           - run fmt, lint, test' \
-		'make install-lint - install pinned golangci-lint locally' \
-		'make clean        - remove local build tools'
-
-fmt:
-	$(GO) fmt ./...
-
+.PHONY: install-lint
 install-lint:
 	@mkdir -p $(CURDIR)/bin
 	@curl -sSfL https://golangci-lint.run/install.sh | sh -s -- -d -b $(CURDIR)/bin $(GOLANGCI_LINT_VERSION)
@@ -24,12 +14,15 @@ install-lint:
 $(GOLANGCI_LINT):
 	@$(MAKE) install-lint
 
+.PHONY: lint
 lint: $(GOLANGCI_LINT)
 	$(GOLANGCI_LINT) run ./...
 
+.PHONY: lint-fix
 lint-fix: $(GOLANGCI_LINT)
 	$(GOLANGCI_LINT) run --fix ./...
 
+.PHONY: test
 test:
 	$(GO) test ./...
 
@@ -37,7 +30,15 @@ test:
 tidy:
 	$(GO) mod tidy
 
-ci: fmt lint test
+# Get test coverage
+.PHONY: test-coverage
+test-coverage: install
+	@echo "Run test with coverage"
+	@go tool gotestsum --junitfile report.xml --format testname -- -p 1 ./... -cover -count=1 -coverprofile cover_full.out
+	@grep -v "mock" cover_full.out > cover.out
+	@go tool cover -func cover.out
+	@go tool gocover-cobertura < cover_full.out > cobertura.xml
 
+.PHONY: clean
 clean:
 	rm -rf $(CURDIR)/bin
