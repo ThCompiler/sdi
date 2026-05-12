@@ -151,7 +151,7 @@ func buildInstance(
 	return builtInstances, nil
 }
 
-func buildDependenciesArg(argsType reflect.Type, builtInstancies map[reflect.Type]any) (reflect.Value, error) {
+func buildDependenciesArg(argsType reflect.Type, builtInstances map[reflect.Type]any) (reflect.Value, error) {
 	underlyingType := argsType
 	isPointer := argsType.Kind() == reflect.Pointer
 
@@ -161,7 +161,7 @@ func buildDependenciesArg(argsType reflect.Type, builtInstancies map[reflect.Typ
 
 	if underlyingType.Kind() == reflect.Struct {
 		value := reflect.New(underlyingType).Elem()
-		if err := fillStructDependencies(value, builtInstancies); err != nil {
+		if err := fillStructDependencies(value, builtInstances); err != nil {
 			return reflect.Value{}, err
 		}
 
@@ -172,7 +172,7 @@ func buildDependenciesArg(argsType reflect.Type, builtInstancies map[reflect.Typ
 		return value, nil
 	}
 
-	dep, ok := builtInstancies[argsType]
+	dep, ok := builtInstances[argsType]
 	if !ok {
 		return reflect.Value{}, fmt.Errorf("%w: dependency %v not built", ErrInvalidDependencyValue, argsType)
 	}
@@ -180,7 +180,7 @@ func buildDependenciesArg(argsType reflect.Type, builtInstancies map[reflect.Typ
 	return getDepValue(dep, argsType)
 }
 
-func fillStructDependencies(structVal reflect.Value, builtInstancies map[reflect.Type]any) error {
+func fillStructDependencies(structVal reflect.Value, builtInstances map[reflect.Type]any) error {
 	if structVal.Kind() != reflect.Struct {
 		return fmt.Errorf("%w: expected struct got %v", ErrInvalidDependencyInput, structVal.Kind())
 	}
@@ -191,7 +191,7 @@ func fillStructDependencies(structVal reflect.Value, builtInstancies map[reflect
 			continue
 		}
 
-		dep, ok := builtInstancies[field.Type]
+		dep, ok := builtInstances[field.Type]
 		if !ok {
 			return fmt.Errorf("%w: dependency %v not built", ErrInvalidDependencyValue, field.Type)
 		}
