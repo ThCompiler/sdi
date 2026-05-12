@@ -35,9 +35,9 @@ tidy:
 test-coverage: install
 	@echo "Run test with coverage"
 	$(GO) tool gotestsum --junitfile report.xml --format testname -- -p 1 ./... -cover -count=1 -coverprofile cover_full.out
-	@grep -v "mock" cover_full.out > cover.out
+	@grep -v "example" cover_full.out > cover.out
 	$(GO) tool cover -func cover.out
-	$(GO) tool gocover-cobertura < cover_full.out > cobertura.xml
+	$(GO) tool gocover-cobertura < cover.out > cobertura.xml
 
 .PHONY: clean
 clean:
