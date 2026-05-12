@@ -128,17 +128,16 @@ func (tPointerProvider) GetInstance(_ context.Context, deps *tPointerDeps) tMidd
 }
 func (tPointerProvider) Cleanup(context.Context, tMiddle) error { return nil }
 
-func TestBuildInstance_pointerStructDeps_isTreatedAsSingleDependency(t *testing.T) {
+func TestBuildInstance_pointerStructDeps_success(t *testing.T) {
 	t.Parallel()
 
 	builder := NewBuilder()
 	require.NoError(t, AddProvider[tLeaf, struct{}](builder, tLeafProvider{}))
-	// deps type is *tPointerDeps; since pointer-to-struct is no longer auto-filled,
-	// BuildInstance should fail because *tPointerDeps is not a built instance.
 	require.NoError(t, AddProvider[tMiddle, *tPointerDeps](builder, tPointerProvider{}))
 
-	_, err := BuildInstance[tMiddle](context.Background(), builder)
-	require.ErrorIs(t, err, ErrInvalidDependencyValue)
+	got, err := BuildInstance[tMiddle](context.Background(), builder)
+	require.NoError(t, err)
+	require.Equal(t, 42, got.leaf.v)
 }
 
 func splitNonEmptyLines(str string) []string {

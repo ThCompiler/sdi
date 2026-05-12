@@ -152,13 +152,24 @@ func buildInstance(
 }
 
 func buildDependenciesArg(argsType reflect.Type, builtInstancies map[reflect.Type]any) (reflect.Value, error) {
-	if argsType.Kind() == reflect.Struct {
-		v := reflect.New(argsType).Elem()
-		if err := fillStructDependencies(v, builtInstancies); err != nil {
+	underlyingType := argsType
+	isPointer := argsType.Kind() == reflect.Pointer
+
+	if isPointer {
+		underlyingType = argsType.Elem()
+	}
+
+	if underlyingType.Kind() == reflect.Struct {
+		value := reflect.New(underlyingType).Elem()
+		if err := fillStructDependencies(value, builtInstancies); err != nil {
 			return reflect.Value{}, err
 		}
 
-		return v, nil
+		if isPointer {
+			return value.Addr(), nil
+		}
+
+		return value, nil
 	}
 
 	dep, ok := builtInstancies[argsType]
