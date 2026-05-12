@@ -142,12 +142,14 @@ func TestAddProvider_builderNotInitialized(t *testing.T) {
 		},
 		{
 			name:    "nil graph",
-			builder: &Builder{},
+			builder: &Builder{graph: nil},
 		},
 	}
 
 	for _, tc := range testsCases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
 			err := AddProvider[tLeaf, struct{}](tc.builder, tLeafProvider{})
 			require.ErrorIs(t, err, ErrBuilderNotInitialized)
 		})
@@ -166,12 +168,13 @@ func TestBuildInstance_errors(t *testing.T) {
 		{
 			name:      "builder not initialized",
 			builder:   nil,
+			setup:     nil,
 			expectErr: ErrBuilderNotInitialized,
 		},
 		{
-			name:    "unknown instance",
-			builder: NewBuilder(),
-			setup:   func(*testing.T, *Builder) {},
+			name:      "unknown instance",
+			builder:   NewBuilder(),
+			setup:     func(*testing.T, *Builder) {},
 			expectErr: ErrUnknownInstanceType,
 		},
 		{
@@ -194,6 +197,8 @@ func TestBuildInstance_errors(t *testing.T) {
 
 	for _, tc := range testsCases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
 			if tc.setup != nil && tc.builder != nil {
 				tc.setup(t, tc.builder)
 			}

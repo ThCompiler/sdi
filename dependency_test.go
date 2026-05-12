@@ -2,14 +2,17 @@ package sdi
 
 import (
 	"context"
-	"errors"
 	"io"
 	"reflect"
 	"testing"
 
-	"github.com/stretchr/testify/require"
 	internalpkg "github.com/ThCompiler/sdi/internal"
+	"github.com/stretchr/testify/require"
 )
+
+const testValue = "value"
+
+var errBoom = io.ErrUnexpectedEOF
 
 type testCloser struct {
 	closed bool
@@ -18,6 +21,7 @@ type testCloser struct {
 
 func (c *testCloser) Close() error {
 	c.closed = true
+
 	return c.err
 }
 
@@ -41,6 +45,7 @@ func TestOnceProvider_GetInstance(t *testing.T) {
 	provider := once[string, string](testProvider{
 		build: func(_ context.Context, deps string) string {
 			callCount++
+
 			return deps + "-built"
 		},
 		cleanup: func(context.Context, string) error {
@@ -69,6 +74,7 @@ func TestOnceProvider_Cleanup(t *testing.T) {
 			cleanup: func(context.Context, string) error {
 				return nil
 			},
+			expectErr: nil,
 		},
 		{
 			name: "wraps cleanup error",
@@ -81,12 +87,16 @@ func TestOnceProvider_Cleanup(t *testing.T) {
 
 	for _, tc := range testsCases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
 			provider := once[string, string](testProvider{
-				build: func(context.Context, string) string { return "value" },
+				build: func(context.Context, string) string {
+					return testValue
+				},
 				cleanup: tc.cleanup,
 			})
 
-			err := provider.Cleanup(context.Background(), "value")
+			err := provider.Cleanup(context.Background(), testValue)
 			require.ErrorIs(t, err, tc.expectErr)
 		})
 	}
@@ -101,7 +111,9 @@ func TestProviderFunc(t *testing.T) {
 		expectErr error
 	}{
 		{
-			name: "cleanup closes instance",
+			name:      "cleanup closes instance",
+			closeErr:  nil,
+			expectErr: nil,
 		},
 		{
 			name:      "cleanup returns close error",
@@ -112,9 +124,12 @@ func TestProviderFunc(t *testing.T) {
 
 	for _, tc := range testsCases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
 			provider := ProviderFunc[*testCloser, string](func(_ context.Context, deps string) *testCloser {
 				require.Equal(t, "dep", deps)
-				return &testCloser{err: tc.closeErr}
+
+				return &testCloser{closed: false, err: tc.closeErr}
 			})
 
 			instance := provider.GetInstance(context.Background(), "dep")
@@ -131,12 +146,14 @@ func TestProviderFunc2(t *testing.T) {
 
 	cleanCalled := false
 	provider := ProviderFunc2[string, int](
-		func(_ context.Context, deps int) string {
-			return "value"
+		func(_ context.Context, _ int) string {
+			return testValue
 		},
 		func(_ context.Context, instance string) error {
 			cleanCalled = true
-			require.Equal(t, "value", instance)
+
+			require.Equal(t, testValue, instance)
+
 			return nil
 		},
 	)
@@ -145,7 +162,7 @@ func TestProviderFunc2(t *testing.T) {
 	err := provider.Cleanup(context.Background(), instance)
 
 	require.NoError(t, err)
-	require.Equal(t, "value", instance)
+	require.Equal(t, testValue, instance)
 	require.True(t, cleanCalled)
 }
 
@@ -154,25 +171,26 @@ func TestProviderFuncNoClean(t *testing.T) {
 
 	provider := ProviderFuncNoClean[string, int](func(_ context.Context, deps int) string {
 		require.Equal(t, 2, deps)
-		return "value"
+
+		return testValue
 	})
 
 	instance := provider.GetInstance(context.Background(), 2)
 	err := provider.Cleanup(context.Background(), instance)
 
 	require.NoError(t, err)
-	require.Equal(t, "value", instance)
+	require.Equal(t, testValue, instance)
 }
 
 func TestNewInstanceFuncWithoutDeps(t *testing.T) {
 	t.Parallel()
 
 	newFunc := NewInstanceFuncWithoutDeps(func(_ context.Context) string {
-		return "value"
+		return testValue
 	})
 
 	instance := newFunc(context.Background(), struct{}{})
-	require.Equal(t, "value", instance)
+	require.Equal(t, testValue, instance)
 }
 
 func TestInternalNew(t *testing.T) {
@@ -184,122 +202,89 @@ func TestInternalNew(t *testing.T) {
 	require.Equal(t, 42, *ptr)
 }
 
-func TestBuildHelpers(t *testing.T) {
+func TestBuildInstance_invalidProviderWithoutGetInstance(t *testing.T) {
 	t.Parallel()
 
-	testsCases := []struct {
-		name      string
-		run       func(*testing.T)
-		expectErr error
-		checkErr  bool
-	}{
-		{
-			name: "build instance returns invalid provider when GetInstance missing",
-			run: func(t *testing.T) {
-				t.Helper()
+	_, err := buildInstance(context.Background(), instanceInfo{
+		instanceType: reflectTypeOf[string](),
+		argsType:     reflectTypeOf[struct{}](),
+		provider:     struct{}{},
+	}, map[reflect.Type]any{})
 
-				_, err := buildInstance(context.Background(), instanceInfo{
-					instanceType: reflectTypeOf[string](),
-					argsType:     reflectTypeOf[struct{}](),
-					provider:     struct{}{},
-				}, map[reflect.Type]any{})
+	require.ErrorIs(t, err, ErrInvalidProvider)
+}
 
-				require.ErrorIs(t, err, ErrInvalidProvider)
-			},
-		},
-		{
-			name: "build instance returns invalid provider when provider returns wrong type",
-			run: func(t *testing.T) {
-				t.Helper()
+func TestBuildInstance_invalidProviderWrongType(t *testing.T) {
+	t.Parallel()
 
-				provider := ProviderFuncNoClean[bool, struct{}](func(context.Context, struct{}) bool { return true })
-				_, err := buildInstance(context.Background(), instanceInfo{
-					instanceType: reflectTypeOf[string](),
-					argsType:     reflectTypeOf[struct{}](),
-					provider:     provider,
-				}, map[reflect.Type]any{})
+	provider := ProviderFuncNoClean[bool, struct{}](func(context.Context, struct{}) bool { return true })
 
-				require.ErrorIs(t, err, ErrInvalidProvider)
-			},
-		},
-		{
-			name: "build dependencies arg returns invalid dependency value for missing single dependency",
-			run: func(t *testing.T) {
-				t.Helper()
+	_, err := buildInstance(context.Background(), instanceInfo{
+		instanceType: reflectTypeOf[string](),
+		argsType:     reflectTypeOf[struct{}](),
+		provider:     provider,
+	}, map[reflect.Type]any{})
 
-				_, err := buildDependenciesArg(reflectTypeOf[string](), map[reflect.Type]any{})
-				require.ErrorIs(t, err, ErrInvalidDependencyValue)
-			},
-		},
-		{
-			name: "fill struct dependencies returns error when dependency missing",
-			run: func(t *testing.T) {
-				t.Helper()
+	require.ErrorIs(t, err, ErrInvalidProvider)
+}
 
-				deps := reflect.New(reflectTypeOf[struct{ Value string }]()).Elem()
-				err := fillStructDependencies(deps, map[reflect.Type]any{})
-				require.ErrorIs(t, err, ErrInvalidDependencyValue)
-			},
-		},
-		{
-			name: "get result returns dependency build failed for invalid value",
-			run: func(t *testing.T) {
-				t.Helper()
+func TestBuildDependenciesArg_missingSingleDependency(t *testing.T) {
+	t.Parallel()
 
-				_, err := getResult([]reflect.Value{reflect.Value{}}, reflectTypeOf[string]())
-				require.ErrorIs(t, err, ErrDependencyBuildFailed)
-			},
-		},
-		{
-			name: "get result converts compatible value",
-			run: func(t *testing.T) {
-				t.Helper()
+	_, err := buildDependenciesArg(reflectTypeOf[string](), map[reflect.Type]any{})
+	require.ErrorIs(t, err, ErrInvalidDependencyValue)
+}
 
-				value, err := getResult([]reflect.Value{reflect.ValueOf(41)}, reflectTypeOf[aliasInt]())
-				require.NoError(t, err)
-				require.Equal(t, aliasInt(41), value.Interface())
-			},
-		},
-		{
-			name: "get dep value converts compatible value",
-			run: func(t *testing.T) {
-				t.Helper()
+func TestFillStructDependencies_missingDependency(t *testing.T) {
+	t.Parallel()
 
-				value, err := getDepValue(41, reflectTypeOf[aliasInt]())
-				require.NoError(t, err)
-				require.Equal(t, aliasInt(41), value.Interface())
-			},
-		},
-		{
-			name: "get dep value returns invalid dependency value for incompatible type",
-			run: func(t *testing.T) {
-				t.Helper()
+	deps := reflect.New(reflectTypeOf[struct{ Value string }]()).Elem()
+	err := fillStructDependencies(deps, map[reflect.Type]any{})
 
-				_, err := getDepValue(errors.New("boom"), reflectTypeOf[string]())
-				require.ErrorIs(t, err, ErrInvalidDependencyValue)
-			},
-		},
-		{
-			name: "get args types returns single non struct dependency",
-			run: func(t *testing.T) {
-				t.Helper()
+	require.ErrorIs(t, err, ErrInvalidDependencyValue)
+}
 
-				types := getArgsTypes(reflectTypeOf[string]())
-				require.Equal(t, []reflect.Type{reflectTypeOf[string]()}, types)
-			},
-		},
-	}
+func TestGetResult_invalidValue(t *testing.T) {
+	t.Parallel()
 
-	for _, tc := range testsCases {
-		t.Run(tc.name, func(t *testing.T) {
-			tc.run(t)
-		})
-	}
+	_, err := getResult([]reflect.Value{{}}, reflectTypeOf[string]())
+	require.ErrorIs(t, err, ErrDependencyBuildFailed)
+}
+
+func TestGetResult_convertsCompatibleValue(t *testing.T) {
+	t.Parallel()
+
+	value, err := getResult([]reflect.Value{reflect.ValueOf(41)}, reflectTypeOf[aliasInt]())
+
+	require.NoError(t, err)
+	require.Equal(t, aliasInt(41), value.Interface())
+}
+
+func TestGetDepValue_convertsCompatibleValue(t *testing.T) {
+	t.Parallel()
+
+	value, err := getDepValue(41, reflectTypeOf[aliasInt]())
+
+	require.NoError(t, err)
+	require.Equal(t, aliasInt(41), value.Interface())
+}
+
+func TestGetDepValue_invalidType(t *testing.T) {
+	t.Parallel()
+
+	_, err := getDepValue(errBoom, reflectTypeOf[string]())
+	require.ErrorIs(t, err, ErrInvalidDependencyValue)
+}
+
+func TestGetArgsTypes_returnsSingleNonStructDependency(t *testing.T) {
+	t.Parallel()
+
+	types := getArgsTypes(reflectTypeOf[string]())
+	require.Equal(t, []reflect.Type{reflectTypeOf[string]()}, types)
 }
 
 type aliasInt int
 
 func reflectTypeOf[T any]() reflect.Type {
-	var zero *T
-	return reflect.TypeOf(zero).Elem()
+	return reflect.TypeFor[T]()
 }

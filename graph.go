@@ -111,7 +111,7 @@ const (
 // pushed and processed). If visitor returns an error, traversal stops and the
 // error is wrapped with the current node type.
 //
-//nolint:gocyclo // keep the full traversal loop in one place for readability
+//nolint:gocyclo,cyclop // keep the full traversal loop in one place for readability
 func visit(from *node, visitor func(current *node) error) error {
     seen := make(map[*node]color)
     stack := []*node{from}
@@ -122,8 +122,8 @@ func visit(from *node, visitor func(current *node) error) error {
         if clr, ok := seen[top]; ok || len(top.dependencies) == 0 {
             stack = stack[:len(stack)-1]
 
-			// If the node has already visited (black), we can skip it.
-			// This can happen when multiple nodes share a dependency.
+            // If the node has already visited (black), we can skip it.
+            // This can happen when multiple nodes share a dependency.
             if ok && clr == black {
                 continue
             }
