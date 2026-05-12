@@ -1,5 +1,13 @@
 // Package sdi provides a small dependency injection container.
 //
+// It is a simple tool for controlling dependencies in your application without
+// taking over application lifecycle, startup flow, or runtime control. It helps
+// you control how dependencies are wired while still letting you choose which
+// final instance to build, when to build it, and how that instance is started
+// or used. The package stays intentionally small: you register providers, build
+// the instance you need, and can optionally render the dependency tree for
+// debugging or inspection.
+//
 // The container is built around a Builder:
 //
 //  1. Register providers with AddProvider in dependency order.

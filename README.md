@@ -2,6 +2,15 @@
 
 Simple dependency injection container for Go.
 
+## Overview
+
+`sdi` is a small dependency injection container and a simple tool for controlling
+dependencies in your application.
+It does not take over application lifecycle, startup flow, or runtime control.
+Instead, it helps you control how dependencies are wired while still letting you
+decide which final instance you want to build, when you want to build it, and
+how that instance will be started or used.
+
 ## Usage
 
 High level flow:
@@ -24,11 +33,16 @@ sdi.AddProvider[InstanceType, DependenciesType](b, provider)
 - If it is a `struct`, its exported fields are treated as dependencies and are filled by type.
 - Otherwise it is treated as a single dependency value.
 
-Providers must be registered in dependency order. If provider `A` depends on `B`, register `B` first and `A` second. `AddProvider` only links to dependencies that are already present in the builder, so registering out of order returns `ErrDependencyNotFound`.
+Providers must be registered in dependency order. If provider `A` depends on `B`,
+register `B` first and `A` second. `AddProvider` only links to dependencies that are
+already present in the builder, so registering out of order returns
+`ErrDependencyNotFound`.
 
 Pointer and non-pointer types are distinct. If you need `*T`, register/provide `*T` explicitly.
 
-`Builder` and the underlying dependency graph are not thread-safe. Do not call `AddProvider`, `BuildInstance`, or `ShowDependencies` concurrently on the same builder without external synchronization.
+`Builder` and the underlying dependency graph are not thread-safe. Do not call
+`AddProvider`, `BuildInstance`, or `ShowDependencies` concurrently on the same
+builder without external synchronization.
 
 ### Example
 
@@ -51,15 +65,6 @@ The example demonstrates:
 make fmt
 make lint
 make test
-```
-
-## Release
-
-Create and push a tag:
-
-```bash
-git tag v0.1.0
-git push origin v0.1.0
 ```
 
 GitHub Actions will run CI for pushes and pull requests, then build release archives for tagged versions.

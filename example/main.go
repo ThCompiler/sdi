@@ -1,4 +1,4 @@
-// nolint: mnd,forbidigo,wrapcheck // not needed to check it in example
+// nolint: mnd,forbidigo,wrapcheck,nolintlint // not needed to check it in example
 package main
 
 import (
