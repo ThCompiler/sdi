@@ -67,19 +67,19 @@ func BuildInstance[T any](ctx context.Context, builder *Builder) (T, error) {
 		return zero, err
 	}
 
-	builtInstancies := make(map[reflect.Type]any)
+	builtInstances := make(map[reflect.Type]any)
 
 	var buildErr error
 
 	if err := tree.walkOverDependencies(func(info instanceInfo) error {
-		builtInstancies, buildErr = buildInstance(ctx, info, builtInstancies)
+		builtInstances, buildErr = buildInstance(ctx, info, builtInstances)
 
 		return buildErr
 	}); err != nil {
 		return zero, err
 	}
 
-	res, ok := builtInstancies[reflect.TypeFor[T]()]
+	res, ok := builtInstances[reflect.TypeFor[T]()]
 	if !ok {
 		return zero, fmt.Errorf("%w: %v", ErrDependencyBuildFailed, reflect.TypeFor[T]())
 	}
