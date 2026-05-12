@@ -7,7 +7,7 @@ Simple dependency injection container for Go.
 High level flow:
 
 1. Create a builder: `b := sdi.NewBuilder()`
-2. Register providers with `sdi.AddProvider`.
+2. Register providers with `sdi.AddProvider` in dependency order.
 3. Build a root instance with `sdi.BuildInstance[T]`.
 4. (Optional) Print the dependency tree with `sdi.ShowDependencies[T]`.
 
@@ -24,7 +24,11 @@ sdi.AddProvider[InstanceType, DependenciesType](b, provider)
 - If it is a `struct`, its exported fields are treated as dependencies and are filled by type.
 - Otherwise it is treated as a single dependency value.
 
+Providers must be registered in dependency order. If provider `A` depends on `B`, register `B` first and `A` second. `AddProvider` only links to dependencies that are already present in the builder, so registering out of order returns `ErrDependencyNotFound`.
+
 Pointer and non-pointer types are distinct. If you need `*T`, register/provide `*T` explicitly.
+
+`Builder` and the underlying dependency graph are not thread-safe. Do not call `AddProvider`, `BuildInstance`, or `ShowDependencies` concurrently on the same builder without external synchronization.
 
 ### Example
 

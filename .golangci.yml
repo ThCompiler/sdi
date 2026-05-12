@@ -1,7 +1,7 @@
 version: "2"
 run:
   go: 1.25.7
-  modules-download-mode: vendor
+  modules-download-mode: readonly
 output:
   path-mode: abs
   formats:

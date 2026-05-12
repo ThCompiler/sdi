@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"reflect"
+	"slices"
 	"strings"
 )
 
@@ -30,6 +31,7 @@ func (n *node) addDependency(dependencyNode *node) {
 	n.dependencies = append(n.dependencies, dependencyNode)
 }
 
+// dependencyGraph is not thread-safe.
 type dependencyGraph struct {
 	nodes map[reflect.Type]*node
 }
@@ -52,6 +54,20 @@ func (g *dependencyGraph) addInstance(info instanceInfo, dependenciesTypes []ref
 		return fmt.Errorf("dependency type %v: %w", info.instanceType, ErrDependencyAlreadyExists)
 	}
 
+	notFoundIndex := slices.IndexFunc(
+		dependenciesTypes, func(t reflect.Type) bool {
+			_, exists := g.nodes[t]
+
+			return !exists
+		},
+	)
+
+	if notFoundIndex != -1 {
+		return fmt.Errorf(
+			"%w: %v for type %v", ErrDependencyNotFound, dependenciesTypes[notFoundIndex], info.instanceType,
+		)
+	}
+
 	instanceNode := &node{
 		info:         info,
 		dependencies: make([]*node, 0, len(dependenciesTypes)),
@@ -60,12 +76,7 @@ func (g *dependencyGraph) addInstance(info instanceInfo, dependenciesTypes []ref
 	g.nodes[info.instanceType] = instanceNode
 
 	for _, dependencyType := range dependenciesTypes {
-		dependencyNode, exists := g.nodes[dependencyType]
-		if !exists {
-			return fmt.Errorf("dependency %v for type %v: %w", dependencyType, info.instanceType, ErrDependencyNotFound)
-		}
-
-		instanceNode.addDependency(dependencyNode)
+		instanceNode.addDependency(g.nodes[dependencyType])
 	}
 
 	return nil

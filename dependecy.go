@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"sync"
 
 	"github.com/ThCompiler/sdi/internal"
 )
@@ -15,15 +16,16 @@ type Provider[instance any, dependencies any] interface {
 	Cleanup(context.Context, instance) error
 }
 
-type onceProvider[instance any, args any] struct {
+type onceProvider[instance any, dependencies any] struct {
 	instance *instance
-	provider Provider[instance, args]
+	provider Provider[instance, dependencies]
+	once     *sync.Once
 }
 
 func (o *onceProvider[instance, dependencies]) GetInstance(ctx context.Context, deps dependencies) instance {
-	if o.instance == nil {
+	o.once.Do(func() {
 		o.instance = internal.New(o.provider.GetInstance(ctx, deps))
-	}
+	})
 
 	return *o.instance
 }
@@ -40,6 +42,7 @@ func once[instance any, dependencies any](dep Provider[instance, dependencies]) 
 	return &onceProvider[instance, dependencies]{
 		instance: nil,
 		provider: dep,
+		once:     &sync.Once{},
 	}
 }
 

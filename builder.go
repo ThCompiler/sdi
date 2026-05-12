@@ -12,6 +12,8 @@ type Builder struct {
 }
 
 // NewBuilder creates a new Builder.
+//
+// Builder is not thread-safe.
 func NewBuilder() *Builder {
 	return &Builder{graph: newDependencyGraph()}
 }
@@ -23,10 +25,20 @@ func NewBuilder() *Builder {
 // and are filled by type from already built instances.
 // Otherwise `dependencies` is treated as a single dependency value.
 //
+// Providers must be registered in dependency order: every dependency type must
+// already be registered in builder before AddProvider is called. Otherwise
+// AddProvider returns ErrDependencyNotFound.
+//
 // Note: pointer and non-pointer types are distinct. If your provider needs `*T`,
 // you must register/provide `*T` explicitly.
+//
+// AddProvider is not safe for concurrent use on the same Builder.
 func AddProvider[instance any, dependencies any](builder *Builder, dep Provider[instance, dependencies]) error {
-	err := builder.graph.addInstance(
+	if builder == nil || builder.graph == nil {
+		return ErrBuilderNotInitialized
+	}
+
+	return builder.graph.addInstance(
 		instanceInfo{
 			instanceType: reflect.TypeFor[instance](),
 			argsType:     reflect.TypeFor[dependencies](),
@@ -34,8 +46,6 @@ func AddProvider[instance any, dependencies any](builder *Builder, dep Provider[
 		},
 		getArgsTypes(reflect.TypeFor[dependencies]()),
 	)
-
-	return err
 }
 
 // BuildInstance builds an instance of type T.
@@ -227,17 +237,21 @@ func getDepValue(dep any, valueType reflect.Type) (reflect.Value, error) {
 }
 
 func getArgsTypes(args reflect.Type) []reflect.Type {
+	argsType := args
+
 	if args.Kind() == reflect.Pointer {
-		args = args.Elem()
+		argsType = args.Elem()
 	}
 
-	if args.Kind() != reflect.Struct {
+	if argsType.Kind() != reflect.Struct {
 		return []reflect.Type{args}
 	}
 
-	resArgs := make([]reflect.Type, 0, args.NumField())
-	for _, field := range reflect.VisibleFields(args) {
-		resArgs = append(resArgs, field.Type)
+	resArgs := make([]reflect.Type, 0, argsType.NumField())
+	for _, field := range reflect.VisibleFields(argsType) {
+		if field.IsExported() {
+			resArgs = append(resArgs, field.Type)
+		}
 	}
 
 	return resArgs
