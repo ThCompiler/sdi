@@ -136,7 +136,8 @@ func visit(from *node, visitor func(current *node) error) error {
 				// a node can only reference dependency types that have already been added.
 				// This enforces a topological order of registrations, therefore a cycle cannot
 				// be created through addInstance.
-				// So it's imposible way, but needed to info developer about cycle in case of wrong graph construction.
+				// This path should be unreachable, but we panic to inform the developer if the
+				// graph is constructed incorrectly and a cycle is introduced.
 				panic(fmt.Errorf("type %v: %w", dep.Type(), ErrDependencyCycle))
 			case !ok:
 				stack = append(stack, dep)
