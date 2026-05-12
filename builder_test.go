@@ -100,6 +100,22 @@ func TestShowDependencies_unknownInstance(t *testing.T) {
 	require.ErrorIs(t, err, ErrUnknownInstanceType)
 }
 
+type errWriter struct{}
+
+func (errWriter) Write([]byte) (int, error) {
+	return 0, context.DeadlineExceeded
+}
+
+func TestShowDependencies_writeError(t *testing.T) {
+	t.Parallel()
+
+	builder := NewBuilder()
+	require.NoError(t, AddProvider[tLeaf, struct{}](builder, tLeafProvider{}))
+
+	_, err := ShowDependencies[tLeaf](builder, errWriter{})
+	require.ErrorIs(t, err, ErrOutputWriteFailed)
+}
+
 func TestBuildInstance_structDeps_success(t *testing.T) {
 	t.Parallel()
 
@@ -111,6 +127,81 @@ func TestBuildInstance_structDeps_success(t *testing.T) {
 	got, err := BuildInstance[tRoot](context.Background(), b)
 	require.NoError(t, err)
 	require.Equal(t, 42, got.mid.leaf.v)
+}
+
+func TestAddProvider_builderNotInitialized(t *testing.T) {
+	t.Parallel()
+
+	testsCases := []struct {
+		name    string
+		builder *Builder
+	}{
+		{
+			name:    "nil builder",
+			builder: nil,
+		},
+		{
+			name:    "nil graph",
+			builder: &Builder{},
+		},
+	}
+
+	for _, tc := range testsCases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := AddProvider[tLeaf, struct{}](tc.builder, tLeafProvider{})
+			require.ErrorIs(t, err, ErrBuilderNotInitialized)
+		})
+	}
+}
+
+func TestBuildInstance_errors(t *testing.T) {
+	t.Parallel()
+
+	testsCases := []struct {
+		name      string
+		builder   *Builder
+		setup     func(*testing.T, *Builder)
+		expectErr error
+	}{
+		{
+			name:      "builder not initialized",
+			builder:   nil,
+			expectErr: ErrBuilderNotInitialized,
+		},
+		{
+			name:    "unknown instance",
+			builder: NewBuilder(),
+			setup:   func(*testing.T, *Builder) {},
+			expectErr: ErrUnknownInstanceType,
+		},
+		{
+			name:    "build wraps invalid provider",
+			builder: NewBuilder(),
+			setup: func(t *testing.T, builder *Builder) {
+				t.Helper()
+				require.NoError(t, builder.graph.addInstance(
+					instanceInfo{
+						instanceType: reflectTypeOf[tLeaf](),
+						argsType:     reflectTypeOf[struct{}](),
+						provider:     struct{}{},
+					},
+					nil,
+				))
+			},
+			expectErr: ErrInvalidProvider,
+		},
+	}
+
+	for _, tc := range testsCases {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.setup != nil && tc.builder != nil {
+				tc.setup(t, tc.builder)
+			}
+
+			_, err := BuildInstance[tLeaf](context.Background(), tc.builder)
+			require.ErrorIs(t, err, tc.expectErr)
+		})
+	}
 }
 
 type tPointerDeps struct{ Leaf tLeaf }

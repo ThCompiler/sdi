@@ -1,5 +1,8 @@
 # sdi
 
+[![CI](https://github.com/ThCompiler/sdi/actions/workflows/ci.yml/badge.svg)](https://github.com/ThCompiler/sdi/actions/workflows/ci.yml)
+[![Release](https://github.com/ThCompiler/sdi/actions/workflows/release.yml/badge.svg)](https://github.com/ThCompiler/sdi/actions/workflows/release.yml)
+
 Simple dependency injection container for Go.
 
 ## Overview
