@@ -114,41 +114,41 @@ func ShowDependencies[T any](builder *Builder, writer io.Writer) (int64, error) 
 }
 
 func buildInstance(
-	ctx context.Context, info instanceInfo, builtInstancies map[reflect.Type]any,
+	ctx context.Context, info instanceInfo, builtInstances map[reflect.Type]any,
 ) (map[reflect.Type]any, error) {
-	if _, exists := builtInstancies[info.instanceType]; exists {
-		return builtInstancies, nil
+	if _, exists := builtInstances[info.instanceType]; exists {
+		return builtInstances, nil
 	}
 
 	providerVal := reflect.ValueOf(info.provider)
 
 	getInstance := providerVal.MethodByName("GetInstance")
 	if !getInstance.IsValid() {
-		return builtInstancies, fmt.Errorf(
+		return builtInstances, fmt.Errorf(
 			"%w: provider for %v has no GetInstance", ErrInvalidProvider, info.instanceType,
 		)
 	}
 
-	depsArg, err := buildDependenciesArg(info.argsType, builtInstancies)
+	depsArg, err := buildDependenciesArg(info.argsType, builtInstances)
 	if err != nil {
-		return builtInstancies, err
+		return builtInstances, err
 	}
 
 	out := getInstance.Call([]reflect.Value{reflect.ValueOf(ctx), depsArg})
 	if len(out) != 1 {
-		return builtInstancies, fmt.Errorf(
+		return builtInstances, fmt.Errorf(
 			"%w: provider for %v returns %d values", ErrInvalidProvider, info.instanceType, len(out),
 		)
 	}
 
 	instVal, err := getResult(out, info.instanceType)
 	if err != nil {
-		return builtInstancies, err
+		return builtInstances, err
 	}
 
-	builtInstancies[info.instanceType] = instVal.Interface()
+	builtInstances[info.instanceType] = instVal.Interface()
 
-	return builtInstancies, nil
+	return builtInstances, nil
 }
 
 func buildDependenciesArg(argsType reflect.Type, builtInstancies map[reflect.Type]any) (reflect.Value, error) {
