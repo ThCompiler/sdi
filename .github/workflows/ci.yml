@@ -80,7 +80,7 @@ jobs:
       - name: Enforce coverage threshold
         run: |
           total=$(go tool cover -func=cover.out | awk '/^total:/ {print substr($3, 1, length($3)-1)}')
-          awk -v total="$total" 'BEGIN { if (total + 0 < 86) { exit 1 } }'
+          awk -v total="$total" 'BEGIN { if (total + 0 < 92) { exit 1 } }'
 
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v4
