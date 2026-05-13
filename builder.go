@@ -187,7 +187,7 @@ func fillStructDependencies(structVal reflect.Value, builtInstances map[reflect.
 
 	for _, field := range reflect.VisibleFields(structVal.Type()) {
 		fv := structVal.FieldByIndex(field.Index)
-		if !fv.CanSet() {
+		if !isArgField(field, structVal) {
 			continue
 		}
 
@@ -260,10 +260,16 @@ func getArgsTypes(args reflect.Type) []reflect.Type {
 
 	resArgs := make([]reflect.Type, 0, argsType.NumField())
 	for _, field := range reflect.VisibleFields(argsType) {
-		if field.IsExported() {
+		fv := reflect.New(argsType).Elem().FieldByIndex(field.Index)
+
+		if isArgField(field, fv) {
 			resArgs = append(resArgs, field.Type)
 		}
 	}
 
 	return resArgs
+}
+
+func isArgField(field reflect.StructField, fieldValue reflect.Value) bool {
+	return fieldValue.CanSet() && field.IsExported() && !field.Anonymous
 }

@@ -30,6 +30,8 @@ jobs:
         run: go build ./...
 
       - name: Check Version
+        env:
+          CHECK: 1
         run: bash ./.github/scripts/version.sh $(cat ./.version)
   lint:
     runs-on: ubuntu-latest

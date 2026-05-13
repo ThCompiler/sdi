@@ -3,6 +3,7 @@ package sdi
 import (
 	"bytes"
 	"context"
+	"reflect"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -211,6 +212,20 @@ func TestBuildInstance_errors(t *testing.T) {
 
 type tPointerDeps struct{ Leaf tLeaf }
 
+type TEmbeddedConfig struct{ Value string }
+
+type tEmbeddedMiddleDeps struct{ TEmbeddedConfig }
+
+type tEmbeddedMiddle struct{ config TEmbeddedConfig }
+
+type tEmbeddedMiddleProvider struct{}
+
+func (tEmbeddedMiddleProvider) GetInstance(_ context.Context, deps tEmbeddedMiddleDeps) tEmbeddedMiddle {
+	return tEmbeddedMiddle{config: deps.TEmbeddedConfig}
+}
+
+func (tEmbeddedMiddleProvider) Cleanup(context.Context, tEmbeddedMiddle) error { return nil }
+
 type tPointerProvider struct{}
 
 func (tPointerProvider) GetInstance(_ context.Context, deps *tPointerDeps) tMiddle {
@@ -234,6 +249,29 @@ func TestBuildInstance_pointerStructDeps_success(t *testing.T) {
 	got, err := BuildInstance[tMiddle](context.Background(), builder)
 	require.NoError(t, err)
 	require.Equal(t, 42, got.leaf.v)
+}
+
+func TestBuildInstance_embeddedStructDependencyUsesPromotedFields(t *testing.T) {
+	t.Parallel()
+
+	builder := NewBuilder()
+	require.NoError(t, AddProvider[string, struct{}](builder, ProviderFuncNoClean(
+		func(context.Context, struct{}) string {
+			return testValue
+		},
+	)))
+	require.NoError(t, AddProvider[tEmbeddedMiddle, tEmbeddedMiddleDeps](builder, tEmbeddedMiddleProvider{}))
+
+	got, err := BuildInstance[tEmbeddedMiddle](context.Background(), builder)
+	require.NoError(t, err)
+	require.Equal(t, testValue, got.config.Value)
+}
+
+func TestGetArgsTypes_embeddedStructDependencyUsesPromotedFields(t *testing.T) {
+	t.Parallel()
+
+	types := getArgsTypes(reflectTypeOf[tEmbeddedMiddleDeps]())
+	require.Equal(t, []reflect.Type{reflectTypeOf[string]()}, types)
 }
 
 func splitNonEmptyLines(str string) []string {
