@@ -30,7 +30,7 @@ jobs:
         run: go build ./...
 
       - name: Check Version
-        run: bash ./workflow/version.sh $(cat ./.version)
+        run: bash ./.github/scripts/version.sh $(cat ./.version)
   lint:
     runs-on: ubuntu-latest
     permissions:

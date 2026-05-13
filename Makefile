@@ -45,7 +45,7 @@ clean:
 
 .PHONY: clean
 changelog:
-	sh ./workflow/changes.sh $(VERSION) > CURRENT-CHANGELOG.md
+	sh ./.github/scripts/changes.sh $(VERSION) > CURRENT-CHANGELOG.md
 
 .PHONY: release
 release:
