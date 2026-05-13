@@ -1,33 +1,15 @@
 name: CI
 
+env:
+  GO_VERSION: ">=1.25.7"
+
 on:
   push:
     branches:
       - main
-      - master
   pull_request:
 
 jobs:
-  lint:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
-
-      - name: Setup Go
-        uses: actions/setup-go@v6
-        with:
-          cache: true
-          go-version: '>=1.25.7'
-
-      - name: Run golangci-lint
-        uses: golangci/golangci-lint-action@v9
-        with:
-          version: v2.12.1
-
   build:
     runs-on: ubuntu-latest
     permissions:
@@ -36,15 +18,39 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
-
+        with:
+          fetch-depth: 0
       - name: Setup Go
         uses: actions/setup-go@v6
         with:
           cache: true
-          go-version: '>=1.25.7'
+          go-version: ${{ env.GO_VERSION }}
 
       - name: Build
         run: go build ./...
+
+      - name: Check Version
+        run: bash ./workflow/version.sh $(cat ./.version)
+  lint:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          cache: true
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.12.1
 
   test:
     runs-on: ubuntu-latest
@@ -55,12 +61,13 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
-
+        with:
+          fetch-depth: 0
       - name: Setup Go
         uses: actions/setup-go@v6
         with:
           cache: true
-          go-version: '>=1.25.7'
+          go-version: ${{ env.GO_VERSION }}
 
       - name: Run tests
         run: make test

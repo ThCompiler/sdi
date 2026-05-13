@@ -42,3 +42,12 @@ test-coverage: install
 .PHONY: clean
 clean:
 	rm -rf $(CURDIR)/bin
+
+.PHONY: clean
+changelog:
+	sh ./workflow/changes.sh $(VERSION) > CURRENT-CHANGELOG.md
+
+.PHONY: release
+release:
+	git tag $(VERSION); \
+	git push origin $(VERSION)

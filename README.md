@@ -65,9 +65,11 @@ The example demonstrates:
 ## Development
 
 ```bash
-make fmt
 make lint
 make test
+make test-coverage
 ```
 
-GitHub Actions will run CI for pushes and pull requests, then build release archives for tagged versions.
+See `CONTRIBUTING.md` for contribution and local development guidelines.
+
+GitHub Actions run lint, build, tests, coverage reporting, and release packaging.
