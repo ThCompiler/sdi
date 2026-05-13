@@ -71,9 +71,6 @@ jobs:
           cache: true
           go-version: ${{ env.GO_VERSION }}
 
-      - name: Run tests
-        run: make test
-
       - name: Run tests with coverage
         run: make test-coverage
 

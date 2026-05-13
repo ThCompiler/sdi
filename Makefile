@@ -43,7 +43,7 @@ test-coverage: install
 clean:
 	rm -rf $(CURDIR)/bin
 
-.PHONY: clean
+.PHONY: changelog
 changelog:
 	sh ./.github/scripts/changes.sh $(VERSION) > CURRENT-CHANGELOG.md
 
