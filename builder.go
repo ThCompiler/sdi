@@ -1,21 +1,21 @@
 package sdi
 
 import (
-    "context"
-    "fmt"
-    "io"
-    "reflect"
+	"context"
+	"fmt"
+	"io"
+	"reflect"
 )
 
 type Builder struct {
-    graph *dependencyGraph
+	graph *dependencyGraph
 }
 
 // NewBuilder creates a new Builder.
 //
 // Builder is not thread-safe.
 func NewBuilder() *Builder {
-    return &Builder{graph: newDependencyGraph()}
+	return &Builder{graph: newDependencyGraph()}
 }
 
 // AddProvider registers a Provider that can build the `instance` type.
@@ -34,18 +34,18 @@ func NewBuilder() *Builder {
 //
 // AddProvider is not safe for concurrent use on the same Builder.
 func AddProvider[instance any, dependencies any](builder *Builder, dep Provider[instance, dependencies]) error {
-    if builder == nil || builder.graph == nil {
-        return ErrBuilderNotInitialized
-    }
+	if builder == nil || builder.graph == nil {
+		return ErrBuilderNotInitialized
+	}
 
-    return builder.graph.addInstance(
-        instanceInfo{
-            instanceType: reflect.TypeFor[instance](),
-            argsType:     reflect.TypeFor[dependencies](),
-            provider:     once(dep),
-        },
-        getArgsTypes(reflect.TypeFor[dependencies]()),
-    )
+	return builder.graph.addInstance(
+		instanceInfo{
+			instanceType: reflect.TypeFor[instance](),
+			argsType:     reflect.TypeFor[dependencies](),
+			provider:     once(dep),
+		},
+		getArgsTypes(reflect.TypeFor[dependencies]()),
+	)
 }
 
 // BuildInstance builds an instance of type T.
@@ -56,220 +56,220 @@ func AddProvider[instance any, dependencies any](builder *Builder, dep Provider[
 // Providers are wrapped with once(), so Provider.GetInstance is called at most
 // once per provider for the lifetime of the Builder.
 func BuildInstance[T any](ctx context.Context, builder *Builder) (T, error) {
-    var zero T
+	var zero T
 
-    if builder == nil || builder.graph == nil {
-        return zero, ErrBuilderNotInitialized
-    }
+	if builder == nil || builder.graph == nil {
+		return zero, ErrBuilderNotInitialized
+	}
 
-    tree, err := builder.graph.getDependencyTree(reflect.TypeFor[T]())
-    if err != nil {
-        return zero, err
-    }
+	tree, err := builder.graph.getDependencyTree(reflect.TypeFor[T]())
+	if err != nil {
+		return zero, err
+	}
 
-    builtInstances := make(map[reflect.Type]any)
+	builtInstances := make(map[reflect.Type]any)
 
-    var buildErr error
+	var buildErr error
 
-    if err := tree.walkOverDependencies(func(info instanceInfo) error {
-        builtInstances, buildErr = buildInstance(ctx, info, builtInstances)
+	if err := tree.walkOverDependencies(func(info instanceInfo) error {
+		builtInstances, buildErr = buildInstance(ctx, info, builtInstances)
 
-        return buildErr
-    }); err != nil {
-        return zero, err
-    }
+		return buildErr
+	}); err != nil {
+		return zero, err
+	}
 
-    res, ok := builtInstances[reflect.TypeFor[T]()]
-    if !ok {
-        return zero, fmt.Errorf("%w: %v", ErrDependencyBuildFailed, reflect.TypeFor[T]())
-    }
+	res, ok := builtInstances[reflect.TypeFor[T]()]
+	if !ok {
+		return zero, fmt.Errorf("%w: %v", ErrDependencyBuildFailed, reflect.TypeFor[T]())
+	}
 
-    typed, ok := res.(T)
-    if !ok {
-        return zero, fmt.Errorf("%w: %v", ErrDependencyBuildFailed, reflect.TypeFor[T]())
-    }
+	typed, ok := res.(T)
+	if !ok {
+		return zero, fmt.Errorf("%w: %v", ErrDependencyBuildFailed, reflect.TypeFor[T]())
+	}
 
-    return typed, nil
+	return typed, nil
 }
 
 // ShowDependencies writes the dependency edges for T into writer.
 //
 // Each edge is written as "<from> --> <to>\n". Traversal order is not guaranteed.
 func ShowDependencies[T any](builder *Builder, writer io.Writer) (int64, error) {
-    if builder == nil || builder.graph == nil {
-        return 0, ErrBuilderNotInitialized
-    }
+	if builder == nil || builder.graph == nil {
+		return 0, ErrBuilderNotInitialized
+	}
 
-    tree, err := builder.graph.getDependencyTree(reflect.TypeFor[T]())
-    if err != nil {
-        return 0, err
-    }
+	tree, err := builder.graph.getDependencyTree(reflect.TypeFor[T]())
+	if err != nil {
+		return 0, err
+	}
 
-    n, err := tree.WriteTo(writer)
-    if err != nil {
-        return 0, fmt.Errorf("%w: %w", ErrOutputWriteFailed, err)
-    }
+	n, err := tree.WriteTo(writer)
+	if err != nil {
+		return 0, fmt.Errorf("%w: %w", ErrOutputWriteFailed, err)
+	}
 
-    return n, nil
+	return n, nil
 }
 
 func buildInstance(
-    ctx context.Context, info instanceInfo, builtInstances map[reflect.Type]any,
+	ctx context.Context, info instanceInfo, builtInstances map[reflect.Type]any,
 ) (map[reflect.Type]any, error) {
-    if _, exists := builtInstances[info.instanceType]; exists {
-        return builtInstances, nil
-    }
+	if _, exists := builtInstances[info.instanceType]; exists {
+		return builtInstances, nil
+	}
 
-    providerVal := reflect.ValueOf(info.provider)
+	providerVal := reflect.ValueOf(info.provider)
 
-    getInstance := providerVal.MethodByName("GetInstance")
-    if !getInstance.IsValid() {
-        return builtInstances, fmt.Errorf(
-            "%w: provider for %v has no GetInstance", ErrInvalidProvider, info.instanceType,
-        )
-    }
+	getInstance := providerVal.MethodByName("GetInstance")
+	if !getInstance.IsValid() {
+		return builtInstances, fmt.Errorf(
+			"%w: provider for %v has no GetInstance", ErrInvalidProvider, info.instanceType,
+		)
+	}
 
-    depsArg, err := buildDependenciesArg(info.argsType, builtInstances)
-    if err != nil {
-        return builtInstances, err
-    }
+	depsArg, err := buildDependenciesArg(info.argsType, builtInstances)
+	if err != nil {
+		return builtInstances, err
+	}
 
-    out := getInstance.Call([]reflect.Value{reflect.ValueOf(ctx), depsArg})
-    if len(out) != 1 {
-        return builtInstances, fmt.Errorf(
-            "%w: provider for %v returns %d values", ErrInvalidProvider, info.instanceType, len(out),
-        )
-    }
+	out := getInstance.Call([]reflect.Value{reflect.ValueOf(ctx), depsArg})
+	if len(out) != 1 {
+		return builtInstances, fmt.Errorf(
+			"%w: provider for %v returns %d values", ErrInvalidProvider, info.instanceType, len(out),
+		)
+	}
 
-    instVal, err := getResult(out, info.instanceType)
-    if err != nil {
-        return builtInstances, err
-    }
+	instVal, err := getResult(out, info.instanceType)
+	if err != nil {
+		return builtInstances, err
+	}
 
-    builtInstances[info.instanceType] = instVal.Interface()
+	builtInstances[info.instanceType] = instVal.Interface()
 
-    return builtInstances, nil
+	return builtInstances, nil
 }
 
 func buildDependenciesArg(argsType reflect.Type, builtInstances map[reflect.Type]any) (reflect.Value, error) {
-    underlyingType := argsType
-    isPointer := argsType.Kind() == reflect.Pointer
+	underlyingType := argsType
+	isPointer := argsType.Kind() == reflect.Pointer
 
-    if isPointer {
-        underlyingType = argsType.Elem()
-    }
+	if isPointer {
+		underlyingType = argsType.Elem()
+	}
 
-    if underlyingType.Kind() == reflect.Struct {
-        value := reflect.New(underlyingType).Elem()
-        if err := fillStructDependencies(value, builtInstances); err != nil {
-            return reflect.Value{}, err
-        }
+	if underlyingType.Kind() == reflect.Struct {
+		value := reflect.New(underlyingType).Elem()
+		if err := fillStructDependencies(value, builtInstances); err != nil {
+			return reflect.Value{}, err
+		}
 
-        if isPointer {
-            return value.Addr(), nil
-        }
+		if isPointer {
+			return value.Addr(), nil
+		}
 
-        return value, nil
-    }
+		return value, nil
+	}
 
-    dep, ok := builtInstances[argsType]
-    if !ok {
-        return reflect.Value{}, fmt.Errorf("%w: dependency %v not built", ErrInvalidDependencyValue, argsType)
-    }
+	dep, ok := builtInstances[argsType]
+	if !ok {
+		return reflect.Value{}, fmt.Errorf("%w: dependency %v not built", ErrInvalidDependencyValue, argsType)
+	}
 
-    return getDepValue(dep, argsType)
+	return getDepValue(dep, argsType)
 }
 
 func fillStructDependencies(structVal reflect.Value, builtInstances map[reflect.Type]any) error {
-    if structVal.Kind() != reflect.Struct {
-        return fmt.Errorf("%w: expected struct got %v", ErrInvalidDependencyInput, structVal.Kind())
-    }
+	if structVal.Kind() != reflect.Struct {
+		return fmt.Errorf("%w: expected struct got %v", ErrInvalidDependencyInput, structVal.Kind())
+	}
 
-    for _, field := range reflect.VisibleFields(structVal.Type()) {
-        fv := structVal.FieldByIndex(field.Index)
-        if !isArgField(field, fv) {
-            continue
-        }
+	for _, field := range reflect.VisibleFields(structVal.Type()) {
+		fv := structVal.FieldByIndex(field.Index)
+		if !isArgField(field, fv) {
+			continue
+		}
 
-        dep, ok := builtInstances[field.Type]
-        if !ok {
-            return fmt.Errorf("%w: dependency %v not built", ErrInvalidDependencyValue, field.Type)
-        }
+		dep, ok := builtInstances[field.Type]
+		if !ok {
+			return fmt.Errorf("%w: dependency %v not built", ErrInvalidDependencyValue, field.Type)
+		}
 
-        depVal, err := getDepValue(dep, field.Type)
-        if err != nil {
-            return err
-        }
+		depVal, err := getDepValue(dep, field.Type)
+		if err != nil {
+			return err
+		}
 
-        fv.Set(depVal)
-    }
+		fv.Set(depVal)
+	}
 
-    return nil
+	return nil
 }
 
 func getResult(out []reflect.Value, expectedType reflect.Type) (reflect.Value, error) {
-    instVal := out[0]
-    if !instVal.IsValid() {
-        return instVal, fmt.Errorf(
-            "%w: provider for %v returned <invalid>", ErrDependencyBuildFailed, expectedType,
-        )
-    }
+	instVal := out[0]
+	if !instVal.IsValid() {
+		return instVal, fmt.Errorf(
+			"%w: provider for %v returned <invalid>", ErrDependencyBuildFailed, expectedType,
+		)
+	}
 
-    if !instVal.Type().AssignableTo(expectedType) {
-        if !instVal.Type().ConvertibleTo(expectedType) {
-            return instVal, fmt.Errorf(
-                "%w: provider for %v returned %v", ErrInvalidProvider, expectedType, instVal.Type(),
-            )
-        }
+	if !instVal.Type().AssignableTo(expectedType) {
+		if !instVal.Type().ConvertibleTo(expectedType) {
+			return instVal, fmt.Errorf(
+				"%w: provider for %v returned %v", ErrInvalidProvider, expectedType, instVal.Type(),
+			)
+		}
 
-        instVal = instVal.Convert(expectedType)
-    }
+		instVal = instVal.Convert(expectedType)
+	}
 
-    return instVal, nil
+	return instVal, nil
 }
 
 func getDepValue(dep any, valueType reflect.Type) (reflect.Value, error) {
-    depVal := reflect.ValueOf(dep)
-    if !depVal.IsValid() {
-        return reflect.Value{}, fmt.Errorf("%w: dependency %v is <invalid>", ErrInvalidDependencyValue, valueType)
-    }
+	depVal := reflect.ValueOf(dep)
+	if !depVal.IsValid() {
+		return reflect.Value{}, fmt.Errorf("%w: dependency %v is <invalid>", ErrInvalidDependencyValue, valueType)
+	}
 
-    if depVal.Type().AssignableTo(valueType) {
-        return depVal, nil
-    }
+	if depVal.Type().AssignableTo(valueType) {
+		return depVal, nil
+	}
 
-    if depVal.Type().ConvertibleTo(valueType) {
-        return depVal.Convert(valueType), nil
-    }
+	if depVal.Type().ConvertibleTo(valueType) {
+		return depVal.Convert(valueType), nil
+	}
 
-    return reflect.Value{}, fmt.Errorf(
-        "%w: dependency %v has type %v", ErrInvalidDependencyValue, valueType, depVal.Type(),
-    )
+	return reflect.Value{}, fmt.Errorf(
+		"%w: dependency %v has type %v", ErrInvalidDependencyValue, valueType, depVal.Type(),
+	)
 }
 
 func getArgsTypes(args reflect.Type) []reflect.Type {
-    argsType := args
+	argsType := args
 
-    if args.Kind() == reflect.Pointer {
-        argsType = args.Elem()
-    }
+	if args.Kind() == reflect.Pointer {
+		argsType = args.Elem()
+	}
 
-    if argsType.Kind() != reflect.Struct {
-        return []reflect.Type{args}
-    }
+	if argsType.Kind() != reflect.Struct {
+		return []reflect.Type{args}
+	}
 
-    resArgs := make([]reflect.Type, 0, argsType.NumField())
-    for _, field := range reflect.VisibleFields(argsType) {
-        fv := reflect.New(argsType).Elem().FieldByIndex(field.Index)
+	resArgs := make([]reflect.Type, 0, argsType.NumField())
+	for _, field := range reflect.VisibleFields(argsType) {
+		fv := reflect.New(argsType).Elem().FieldByIndex(field.Index)
 
-        if isArgField(field, fv) {
-            resArgs = append(resArgs, field.Type)
-        }
-    }
+		if isArgField(field, fv) {
+			resArgs = append(resArgs, field.Type)
+		}
+	}
 
-    return resArgs
+	return resArgs
 }
 
 func isArgField(field reflect.StructField, fieldValue reflect.Value) bool {
-    return fieldValue.CanSet() && field.IsExported() && !field.Anonymous
+	return fieldValue.CanSet() && field.IsExported() && !field.Anonymous
 }
