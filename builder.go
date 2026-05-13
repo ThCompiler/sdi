@@ -160,8 +160,8 @@ func buildDependenciesArg(argsType reflect.Type, builtInstances map[reflect.Type
 	}
 
 	if underlyingType.Kind() == reflect.Struct {
-		value := reflect.New(underlyingType).Elem()
-		if err := fillStructDependencies(value, builtInstances); err != nil {
+		value, err := fillStructDependencies(underlyingType, builtInstances)
+		if err != nil {
 			return reflect.Value{}, err
 		}
 
@@ -180,31 +180,22 @@ func buildDependenciesArg(argsType reflect.Type, builtInstances map[reflect.Type
 	return getDepValue(dep, argsType)
 }
 
-func fillStructDependencies(structVal reflect.Value, builtInstances map[reflect.Type]any) error {
-	if structVal.Kind() != reflect.Struct {
-		return fmt.Errorf("%w: expected struct got %v", ErrInvalidDependencyInput, structVal.Kind())
-	}
-
-	for _, field := range reflect.VisibleFields(structVal.Type()) {
-		fv := structVal.FieldByIndex(field.Index)
-		if !isArgField(field, fv) {
-			continue
-		}
-
-		dep, ok := builtInstances[field.Type]
+func fillStructDependencies(dependenciesType reflect.Type, builtInstances map[reflect.Type]any) (reflect.Value, error) {
+	return processDependenciesStruct(dependenciesType, func(fieldValue reflect.Value) error {
+		dep, ok := builtInstances[fieldValue.Type()]
 		if !ok {
-			return fmt.Errorf("%w: dependency %v not built", ErrInvalidDependencyValue, field.Type)
+			return fmt.Errorf("%w: dependency %v not built", ErrInvalidDependencyValue, fieldValue.Type())
 		}
 
-		depVal, err := getDepValue(dep, field.Type)
+		depVal, err := getDepValue(dep, fieldValue.Type())
 		if err != nil {
 			return err
 		}
 
-		fv.Set(depVal)
-	}
+		fieldValue.Set(depVal)
 
-	return nil
+		return nil
+	})
 }
 
 func getResult(out []reflect.Value, expectedType reflect.Type) (reflect.Value, error) {
@@ -259,15 +250,53 @@ func getArgsTypes(args reflect.Type) []reflect.Type {
 	}
 
 	resArgs := make([]reflect.Type, 0, argsType.NumField())
-	for _, field := range reflect.VisibleFields(argsType) {
-		fv := reflect.New(argsType).Elem().FieldByIndex(field.Index)
 
-		if isArgField(field, fv) {
-			resArgs = append(resArgs, field.Type)
-		}
+	_, err := processDependenciesStruct(argsType, func(fv reflect.Value) error {
+		resArgs = append(resArgs, fv.Type())
+
+		return nil
+	})
+	if err != nil {
+		// if error appears here, it means that package have internal unreceived bug,
+		// so we panic to make it visible instead of silently returning wrong result.
+		panic(err)
 	}
 
 	return resArgs
+}
+
+func processDependenciesStruct(
+	dependencyType reflect.Type,
+	processField func(fieldValue reflect.Value) error,
+) (reflect.Value, error) {
+	if dependencyType.Kind() != reflect.Struct {
+		return reflect.Value{}, fmt.Errorf(
+			"%w: expected struct got %v", ErrInvalidDependencyInput, dependencyType.Kind(),
+		)
+	}
+
+	structVal := reflect.New(dependencyType).Elem()
+
+	for _, field := range reflect.VisibleFields(structVal.Type()) {
+		fv := structVal.FieldByIndex(field.Index)
+
+		// if struct has an embedded pointer struct field, we initialize it to be able to set its fields later.
+		if field.Anonymous && fv.Kind() == reflect.Pointer {
+			fv.Set(reflect.New(fv.Type().Elem()))
+
+			continue
+		}
+
+		if !isArgField(field, fv) {
+			continue
+		}
+
+		if err := processField(fv); err != nil {
+			return reflect.Value{}, err
+		}
+	}
+
+	return structVal, nil
 }
 
 func isArgField(field reflect.StructField, fieldValue reflect.Value) bool {

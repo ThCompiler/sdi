@@ -214,17 +214,35 @@ type tPointerDeps struct{ Leaf tLeaf }
 
 type TEmbeddedConfig struct{ Value string }
 
-type tEmbeddedMiddleDeps struct{ TEmbeddedConfig }
+type TEmbeddedEmbeddedConfig struct{ TEmbeddedConfig }
 
-type tEmbeddedMiddle struct{ config TEmbeddedConfig }
+type tEmbeddedMiddleDeps struct{ TEmbeddedEmbeddedConfig }
+
+type tEmbeddedMiddlePointerDeps struct{ *TEmbeddedEmbeddedConfig }
+
+type tEmbeddedMiddle struct{ config TEmbeddedEmbeddedConfig }
 
 type tEmbeddedMiddleProvider struct{}
 
 func (tEmbeddedMiddleProvider) GetInstance(_ context.Context, deps tEmbeddedMiddleDeps) tEmbeddedMiddle {
-	return tEmbeddedMiddle{config: deps.TEmbeddedConfig}
+	return tEmbeddedMiddle{config: deps.TEmbeddedEmbeddedConfig}
 }
 
 func (tEmbeddedMiddleProvider) Cleanup(context.Context, tEmbeddedMiddle) error { return nil }
+
+type tPointerEmbeddedMiddle struct{ config TEmbeddedEmbeddedConfig }
+
+type tEmbeddedPointerMiddleProvider struct{}
+
+func (tEmbeddedPointerMiddleProvider) GetInstance(
+	_ context.Context, deps tEmbeddedMiddlePointerDeps,
+) tPointerEmbeddedMiddle {
+	return tPointerEmbeddedMiddle{config: *deps.TEmbeddedEmbeddedConfig}
+}
+
+func (tEmbeddedPointerMiddleProvider) Cleanup(context.Context, tPointerEmbeddedMiddle) error {
+	return nil
+}
 
 type tPointerProvider struct{}
 
@@ -263,6 +281,24 @@ func TestBuildInstance_embeddedStructDependencyUsesPromotedFields(t *testing.T) 
 	require.NoError(t, AddProvider[tEmbeddedMiddle, tEmbeddedMiddleDeps](builder, tEmbeddedMiddleProvider{}))
 
 	got, err := BuildInstance[tEmbeddedMiddle](context.Background(), builder)
+	require.NoError(t, err)
+	require.Equal(t, testValue, got.config.Value)
+}
+
+func TestBuildInstance_embeddedPointerStructDependencyUsesPromotedFields(t *testing.T) {
+	t.Parallel()
+
+	builder := NewBuilder()
+	require.NoError(t, AddProvider[string, struct{}](builder, ProviderFuncNoClean(
+		func(context.Context, struct{}) string {
+			return testValue
+		},
+	)))
+	require.NoError(t, AddProvider[tPointerEmbeddedMiddle, tEmbeddedMiddlePointerDeps](
+		builder, tEmbeddedPointerMiddleProvider{}),
+	)
+
+	got, err := BuildInstance[tPointerEmbeddedMiddle](context.Background(), builder)
 	require.NoError(t, err)
 	require.Equal(t, testValue, got.config.Value)
 }

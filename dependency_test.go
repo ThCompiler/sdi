@@ -238,8 +238,7 @@ func TestBuildDependenciesArg_missingSingleDependency(t *testing.T) {
 func TestFillStructDependencies_missingDependency(t *testing.T) {
 	t.Parallel()
 
-	deps := reflect.New(reflectTypeOf[struct{ Value string }]()).Elem()
-	err := fillStructDependencies(deps, map[reflect.Type]any{})
+	_, err := fillStructDependencies(reflectTypeOf[struct{ Value string }](), map[reflect.Type]any{})
 
 	require.ErrorIs(t, err, ErrInvalidDependencyValue)
 }
