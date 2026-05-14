@@ -257,7 +257,7 @@ func getArgsTypes(args reflect.Type) []reflect.Type {
 		return nil
 	})
 	if err != nil {
-		// if error appears here, it means that package have internal unreceived bug,
+		// if error appears here, it means that package have internal unreachable bug,
 		// so we panic to make it visible instead of silently returning wrong result.
 		panic(err)
 	}
