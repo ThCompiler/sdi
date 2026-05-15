@@ -14,10 +14,11 @@
 //  2. Build a root instance with BuildInstance.
 //  3. Optionally render dependencies with ShowDependencies.
 //
-// Dependencies can be declared either as a struct (exported fields are treated as
-// dependencies and filled by type) or as a single value type. Promoted exported
-// fields from embedded structs are treated as dependencies too, while anonymous
-// embedded struct fields themselves are skipped.
+// Dependencies can be declared either as a struct or pointer to a struct
+// (exported fields are treated as dependencies and filled by type) or as a
+// single value type. Promoted exported fields from embedded structs are treated
+// as dependencies too, while anonymous embedded struct fields themselves are
+// skipped.
 //
 // AddProvider requires all dependency types to be registered before the provider
 // that uses them. Registering out of order returns ErrDependencyNotFound.

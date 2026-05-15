@@ -33,10 +33,10 @@ sdi.AddProvider[InstanceType, DependenciesType](b, provider)
 
 `DependenciesType` controls what is passed to `Provider.GetInstance(ctx, deps)`:
 
-- If it is a `struct`, its exported fields are treated as dependencies and are filled by type.
+- If it is a `struct` or pointer to a `struct`, its exported fields are treated as dependencies and are filled by type.
 - Promoted exported fields from embedded structs are treated as dependencies too.
 - Anonymous embedded struct fields themselves are skipped.
-- Otherwise it is treated as a single dependency value.
+- Any other type is treated as a single dependency value.
 
 Providers must be registered in dependency order. If provider `A` depends on `B`,
 register `B` first and `A` second. `AddProvider` only links to dependencies that are

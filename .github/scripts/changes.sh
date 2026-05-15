@@ -13,7 +13,7 @@ cat CHANGELOG.md | while read "line"; do
         continue
     fi
 
-    # If needed version if found, and reaching next delimter - stop
+    # If needed version if found, and reaching next delimiter - stop
     if [ $found -eq 2 ] && echo "$line" | grep -q -E "^$MARKER_PREFIX [[:digit:]]+\.[[:digit:]]+\.[[:digit:]]+"; then
         found=0
         break

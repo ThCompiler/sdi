@@ -21,9 +21,10 @@ func NewBuilder() *Builder {
 // AddProvider registers a Provider that can build the `instance` type.
 //
 // The `dependencies` type controls what is passed to Provider.GetInstance:
-// if `dependencies` is a struct, its exported fields are treated as dependencies
-// and are filled by type from already built instances.
-// Otherwise `dependencies` is treated as a single dependency value.
+// if `dependencies` is a struct or a pointer to a struct, its exported fields
+// are treated as dependencies and are filled by type from already built
+// instances. Otherwise `dependencies` is treated as a single dependency
+// value.
 //
 // Providers must be registered in dependency order: every dependency type must
 // already be registered in builder before AddProvider is called. Otherwise

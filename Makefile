@@ -49,5 +49,5 @@ changelog:
 
 .PHONY: release
 release:
-	git tag $(VERSION); \
+	git tag $(VERSION) && \
 	git push origin $(VERSION)
