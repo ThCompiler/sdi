@@ -50,7 +50,7 @@ func TestShowDependencies(t *testing.T) {
 
 	const nameSuccess = "success"
 
-	testsCases := []struct {
+	testCases := []struct {
 		name string
 		run  func(*testing.T)
 	}{
@@ -61,7 +61,7 @@ func TestShowDependencies(t *testing.T) {
 		{name: "output write error is wrapped", run: testShowDependenciesWriteError},
 	}
 
-	for _, tc := range testsCases {
+	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			tc.run(t)
@@ -74,7 +74,7 @@ func TestAddProvider(t *testing.T) {
 
 	const nameSuccess = "success"
 
-	testsCases := []struct {
+	testCases := []struct {
 		name string
 		run  func(*testing.T)
 	}{
@@ -86,7 +86,7 @@ func TestAddProvider(t *testing.T) {
 		{name: nameSuccess, run: testAddProviderSuccess},
 	}
 
-	for _, tc := range testsCases {
+	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			tc.run(t)
@@ -97,7 +97,7 @@ func TestAddProvider(t *testing.T) {
 func TestBuildInstance_success(t *testing.T) {
 	t.Parallel()
 
-	testsCases := []struct {
+	testCases := []struct {
 		name string
 		run  func(*testing.T)
 	}{
@@ -123,7 +123,7 @@ func TestBuildInstance_success(t *testing.T) {
 		},
 	}
 
-	for _, tc := range testsCases {
+	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -193,6 +193,61 @@ func TestBuildInstance_errors(t *testing.T) {
 			require.ErrorIs(t, err, tc.expectErr)
 		})
 	}
+}
+
+func TestBuildInstance_providerErrorStopsTraversalAndIsReturned(t *testing.T) {
+	t.Parallel()
+
+	errBoom := io.ErrUnexpectedEOF
+
+	type (
+		dep      struct{}
+		root     struct{}
+		rootDeps struct{ Dep dep }
+	)
+
+	depCalls := 0
+	rootCalls := 0
+
+	builder := NewBuilder()
+	require.NoError(t, AddProvider[dep, struct{}](builder, ProviderFuncNoClean(
+		func(context.Context, struct{}) (dep, error) {
+			depCalls++
+
+			return dep{}, errBoom
+		},
+	)))
+	require.NoError(t, AddProvider[root, rootDeps](builder, ProviderFuncNoClean(
+		func(context.Context, rootDeps) (root, error) {
+			rootCalls++
+
+			return root{}, nil
+		},
+	)))
+
+	_, err := BuildInstance[root](context.Background(), builder)
+	require.ErrorIs(t, err, errBoom)
+	require.Contains(t, err.Error(), "visit node")
+	require.Contains(t, err.Error(), "failed to build")
+
+	require.Equal(t, 1, depCalls)
+	require.Equal(t, 0, rootCalls)
+}
+
+func TestBuildInstance_singleValueDependency_success(t *testing.T) {
+	t.Parallel()
+
+	builder := NewBuilder()
+	require.NoError(t, AddProvider[string, struct{}](builder, ProviderFuncNoClean(
+		func(context.Context, struct{}) (string, error) { return "dep", nil },
+	)))
+	require.NoError(t, AddProvider[int, string](builder, ProviderFuncNoClean(
+		func(_ context.Context, dep string) (int, error) { return len(dep), nil },
+	)))
+
+	got, err := BuildInstance[int](context.Background(), builder)
+	require.NoError(t, err)
+	require.Equal(t, 3, got)
 }
 
 type tPointerDeps struct{ Leaf tLeaf }
@@ -518,7 +573,7 @@ func TestGetDepValue_invalidType(t *testing.T) {
 func TestGetArgsTypes(t *testing.T) {
 	t.Parallel()
 
-	testsCases := []struct {
+	testCases := []struct {
 		name string
 		arg  reflect.Type
 		want []reflect.Type
@@ -535,7 +590,7 @@ func TestGetArgsTypes(t *testing.T) {
 		},
 	}
 
-	for _, tc := range testsCases {
+	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 

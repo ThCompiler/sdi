@@ -141,11 +141,11 @@ func TestProviderFunc(t *testing.T) {
 	}
 }
 
-func TestProviderFunc2(t *testing.T) {
+func TestProviderFuncWithCleanup(t *testing.T) {
 	t.Parallel()
 
 	cleanCalled := false
-	provider := ProviderFunc2[string, int](
+	provider := ProviderFuncWithCleanup[string, int](
 		func(_ context.Context, _ int) (string, error) {
 			return testValue, nil
 		},
