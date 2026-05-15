@@ -42,19 +42,19 @@ func (s Service) Run(ctx context.Context) error {
 
 type ConfigProvider struct{}
 
-func (ConfigProvider) GetInstance(context.Context, struct{}) Config {
+func (ConfigProvider) GetInstance(context.Context, struct{}) (Config, error) {
 	return Config{
 		AppName: "sdi-example",
 		Timeout: 250 * time.Millisecond,
-	}
+	}, nil
 }
 
 func (ConfigProvider) Cleanup(context.Context, Config) error { return nil }
 
 type LoggerProvider struct{}
 
-func (LoggerProvider) GetInstance(context.Context, struct{}) *Logger { return &Logger{} }
-func (LoggerProvider) Cleanup(context.Context, *Logger) error        { return nil }
+func (LoggerProvider) GetInstance(context.Context, struct{}) (*Logger, error) { return &Logger{}, nil }
+func (LoggerProvider) Cleanup(context.Context, *Logger) error                 { return nil }
 
 type ServiceDeps struct {
 	Cfg Config
@@ -63,8 +63,8 @@ type ServiceDeps struct {
 
 type ServiceProvider struct{}
 
-func (ServiceProvider) GetInstance(_ context.Context, deps ServiceDeps) Service {
-	return Service{cfg: deps.Cfg, log: deps.Log}
+func (ServiceProvider) GetInstance(_ context.Context, deps ServiceDeps) (Service, error) {
+	return Service{cfg: deps.Cfg, log: deps.Log}, nil
 }
 
 func (ServiceProvider) Cleanup(context.Context, Service) error { return nil }

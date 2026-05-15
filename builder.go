@@ -34,16 +34,20 @@ func NewBuilder() *Builder {
 // you must register/provide `*T` explicitly.
 //
 // AddProvider is not safe for concurrent use on the same Builder.
-func AddProvider[instance any, dependencies any](builder *Builder, dep Provider[instance, dependencies]) error {
+func AddProvider[instance any, dependencies any](builder *Builder, provider Provider[instance, dependencies]) error {
 	if builder == nil || builder.graph == nil {
 		return ErrBuilderNotInitialized
+	}
+
+	if provider == nil {
+		return ErrInvalidProvider
 	}
 
 	return builder.graph.addInstance(
 		instanceInfo{
 			instanceType: reflect.TypeFor[instance](),
 			argsType:     reflect.TypeFor[dependencies](),
-			provider:     once(dep),
+			provider:     once(provider),
 		},
 		getArgsTypes(reflect.TypeFor[dependencies]()),
 	)
@@ -63,14 +67,16 @@ func BuildInstance[T any](ctx context.Context, builder *Builder) (T, error) {
 		return zero, ErrBuilderNotInitialized
 	}
 
-	tree, err := builder.graph.getDependencyTree(reflect.TypeFor[T]())
+	expectedType := reflect.TypeFor[T]()
+
+	tree, err := builder.graph.getDependencyTree(expectedType)
 	if err != nil {
 		return zero, err
 	}
 
-	builtInstances := make(map[reflect.Type]any)
-
 	var buildErr error
+
+	builtInstances := make(map[reflect.Type]reflect.Value)
 
 	if err := tree.walkOverDependencies(func(info instanceInfo) error {
 		builtInstances, buildErr = buildInstance(ctx, info, builtInstances)
@@ -80,14 +86,28 @@ func BuildInstance[T any](ctx context.Context, builder *Builder) (T, error) {
 		return zero, err
 	}
 
-	res, ok := builtInstances[reflect.TypeFor[T]()]
-	if !ok {
-		return zero, fmt.Errorf("%w: %v", ErrDependencyBuildFailed, reflect.TypeFor[T]())
+	res, ok := builtInstances[expectedType]
+	if !ok || !res.IsValid() {
+		return zero, fmt.Errorf("%w: %v", ErrDependencyBuildFailed, expectedType)
 	}
 
-	typed, ok := res.(T)
+	return extractValue[T](res)
+}
+
+func extractValue[T any](value reflect.Value) (T, error) {
+	var zero T
+
+	expectedType := reflect.TypeFor[T]()
+
+	// If T is an interface and the provider returned a nil interface value,
+	// reflect.Value.Interface() returns an untyped nil and loses the static type.
+	if expectedType.Kind() == reflect.Interface && value.IsNil() {
+		return zero, nil
+	}
+
+	typed, ok := value.Interface().(T)
 	if !ok {
-		return zero, fmt.Errorf("%w: %v", ErrDependencyBuildFailed, reflect.TypeFor[T]())
+		return zero, fmt.Errorf("%w: %v", ErrDependencyBuildFailed, expectedType)
 	}
 
 	return typed, nil
@@ -115,8 +135,8 @@ func ShowDependencies[T any](builder *Builder, writer io.Writer) (int64, error) 
 }
 
 func buildInstance(
-	ctx context.Context, info instanceInfo, builtInstances map[reflect.Type]any,
-) (map[reflect.Type]any, error) {
+	ctx context.Context, info instanceInfo, builtInstances map[reflect.Type]reflect.Value,
+) (map[reflect.Type]reflect.Value, error) {
 	if _, exists := builtInstances[info.instanceType]; exists {
 		return builtInstances, nil
 	}
@@ -136,7 +156,7 @@ func buildInstance(
 	}
 
 	out := getInstance.Call([]reflect.Value{reflect.ValueOf(ctx), depsArg})
-	if len(out) != 1 {
+	if len(out) != 2 {
 		return builtInstances, fmt.Errorf(
 			"%w: provider for %v returns %d values", ErrInvalidProvider, info.instanceType, len(out),
 		)
@@ -147,12 +167,12 @@ func buildInstance(
 		return builtInstances, err
 	}
 
-	builtInstances[info.instanceType] = instVal.Interface()
+	builtInstances[info.instanceType] = instVal
 
 	return builtInstances, nil
 }
 
-func buildDependenciesArg(argsType reflect.Type, builtInstances map[reflect.Type]any) (reflect.Value, error) {
+func buildDependenciesArg(argsType reflect.Type, builtInstances map[reflect.Type]reflect.Value) (reflect.Value, error) {
 	underlyingType := argsType
 	isPointer := argsType.Kind() == reflect.Pointer
 
@@ -181,7 +201,9 @@ func buildDependenciesArg(argsType reflect.Type, builtInstances map[reflect.Type
 	return getDepValue(dep, argsType)
 }
 
-func fillStructDependencies(dependenciesType reflect.Type, builtInstances map[reflect.Type]any) (reflect.Value, error) {
+func fillStructDependencies(
+	dependenciesType reflect.Type, builtInstances map[reflect.Type]reflect.Value,
+) (reflect.Value, error) {
 	return processDependenciesStruct(dependenciesType, func(fieldValue reflect.Value) error {
 		dep, ok := builtInstances[fieldValue.Type()]
 		if !ok {
@@ -200,6 +222,18 @@ func fillStructDependencies(dependenciesType reflect.Type, builtInstances map[re
 }
 
 func getResult(out []reflect.Value, expectedType reflect.Type) (reflect.Value, error) {
+	if len(out) != 2 {
+		return reflect.Value{}, fmt.Errorf(
+			"%w: provider for %v returns %d values", ErrInvalidProvider, expectedType, len(out),
+		)
+	}
+
+	if err := getErrorValue(out[1]); err != nil {
+		return reflect.Value{}, fmt.Errorf(
+			"failed build %v with: %w", expectedType, err,
+		)
+	}
+
 	instVal := out[0]
 	if !instVal.IsValid() {
 		return instVal, fmt.Errorf(
@@ -220,8 +254,29 @@ func getResult(out []reflect.Value, expectedType reflect.Type) (reflect.Value, e
 	return instVal, nil
 }
 
-func getDepValue(dep any, valueType reflect.Type) (reflect.Value, error) {
-	depVal := reflect.ValueOf(dep)
+func getErrorValue(errVal reflect.Value) error {
+	errorType := reflect.TypeFor[error]()
+	if !errVal.IsValid() || !errVal.Type().AssignableTo(errorType) {
+		errType := "<invalid>"
+		if errVal.IsValid() {
+			errType = errVal.Type().String()
+		}
+
+		return fmt.Errorf("%w: provider returned %s as error", ErrInvalidProvider, errType)
+	}
+
+	if errVal.Type() != errorType {
+		errVal = errVal.Convert(errorType)
+	}
+
+	if !errVal.IsNil() {
+		return errVal.Interface().(error) //nolint:forcetypeassert // type was checked above
+	}
+
+	return nil
+}
+
+func getDepValue(depVal reflect.Value, valueType reflect.Type) (reflect.Value, error) {
 	if !depVal.IsValid() {
 		return reflect.Value{}, fmt.Errorf("%w: dependency %v is <invalid>", ErrInvalidDependencyValue, valueType)
 	}
@@ -282,7 +337,7 @@ func processDependenciesStruct(
 		fv := structVal.FieldByIndex(field.Index)
 
 		// if struct has an embedded pointer struct field, we initialize it to be able to set its fields later.
-		if field.Anonymous && fv.Kind() == reflect.Pointer {
+		if isEmbeddedStructField(field, fv) {
 			fv.Set(reflect.New(fv.Type().Elem()))
 
 			continue
@@ -302,4 +357,8 @@ func processDependenciesStruct(
 
 func isArgField(field reflect.StructField, fieldValue reflect.Value) bool {
 	return fieldValue.CanSet() && field.IsExported() && !field.Anonymous
+}
+
+func isEmbeddedStructField(field reflect.StructField, fieldValue reflect.Value) bool {
+	return fieldValue.CanSet() && field.Anonymous && fieldValue.Kind() == reflect.Pointer
 }

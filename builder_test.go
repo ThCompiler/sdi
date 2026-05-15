@@ -17,15 +17,15 @@ type (
 
 type tLeafProvider struct{}
 
-func (tLeafProvider) GetInstance(context.Context, struct{}) tLeaf { return tLeaf{v: 42} }
-func (tLeafProvider) Cleanup(context.Context, tLeaf) error        { return nil }
+func (tLeafProvider) GetInstance(context.Context, struct{}) (tLeaf, error) { return tLeaf{v: 42}, nil }
+func (tLeafProvider) Cleanup(context.Context, tLeaf) error                 { return nil }
 
 type tMiddleDeps struct{ Leaf tLeaf }
 
 type tMiddleProvider struct{}
 
-func (tMiddleProvider) GetInstance(_ context.Context, deps tMiddleDeps) tMiddle {
-	return tMiddle{leaf: deps.Leaf}
+func (tMiddleProvider) GetInstance(_ context.Context, deps tMiddleDeps) (tMiddle, error) {
+	return tMiddle{leaf: deps.Leaf}, nil
 }
 func (tMiddleProvider) Cleanup(context.Context, tMiddle) error { return nil }
 
@@ -33,8 +33,8 @@ type tRootDeps struct{ Mid tMiddle }
 
 type tRootProvider struct{}
 
-func (tRootProvider) GetInstance(_ context.Context, deps tRootDeps) tRoot {
-	return tRoot{mid: deps.Mid}
+func (tRootProvider) GetInstance(_ context.Context, deps tRootDeps) (tRoot, error) {
+	return tRoot{mid: deps.Mid}, nil
 }
 func (tRootProvider) Cleanup(context.Context, tRoot) error { return nil }
 
@@ -62,7 +62,7 @@ func TestShowDependencies_success(t *testing.T) {
 func TestShowDependencies_builderNotInitialized(t *testing.T) {
 	t.Parallel()
 
-	testsCases := []struct {
+	testCases := []struct {
 		name    string
 		builder *Builder
 	}{
@@ -78,7 +78,7 @@ func TestShowDependencies_builderNotInitialized(t *testing.T) {
 		},
 	}
 
-	for _, tc := range testsCases {
+	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -133,7 +133,7 @@ func TestBuildInstance_structDeps_success(t *testing.T) {
 func TestAddProvider_builderNotInitialized(t *testing.T) {
 	t.Parallel()
 
-	testsCases := []struct {
+	testCases := []struct {
 		name    string
 		builder *Builder
 	}{
@@ -147,7 +147,7 @@ func TestAddProvider_builderNotInitialized(t *testing.T) {
 		},
 	}
 
-	for _, tc := range testsCases {
+	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -160,7 +160,7 @@ func TestAddProvider_builderNotInitialized(t *testing.T) {
 func TestBuildInstance_errors(t *testing.T) {
 	t.Parallel()
 
-	testsCases := []struct {
+	testCases := []struct {
 		name      string
 		builder   *Builder
 		setup     func(*testing.T, *Builder)
@@ -196,7 +196,7 @@ func TestBuildInstance_errors(t *testing.T) {
 		},
 	}
 
-	for _, tc := range testsCases {
+	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
@@ -224,8 +224,8 @@ type tEmbeddedMiddle struct{ config TEmbeddedEmbeddedConfig }
 
 type tEmbeddedMiddleProvider struct{}
 
-func (tEmbeddedMiddleProvider) GetInstance(_ context.Context, deps tEmbeddedMiddleDeps) tEmbeddedMiddle {
-	return tEmbeddedMiddle{config: deps.TEmbeddedEmbeddedConfig}
+func (tEmbeddedMiddleProvider) GetInstance(_ context.Context, deps tEmbeddedMiddleDeps) (tEmbeddedMiddle, error) {
+	return tEmbeddedMiddle{config: deps.TEmbeddedEmbeddedConfig}, nil
 }
 
 func (tEmbeddedMiddleProvider) Cleanup(context.Context, tEmbeddedMiddle) error { return nil }
@@ -236,8 +236,8 @@ type tEmbeddedPointerMiddleProvider struct{}
 
 func (tEmbeddedPointerMiddleProvider) GetInstance(
 	_ context.Context, deps tEmbeddedMiddlePointerDeps,
-) tPointerEmbeddedMiddle {
-	return tPointerEmbeddedMiddle{config: *deps.TEmbeddedEmbeddedConfig}
+) (tPointerEmbeddedMiddle, error) {
+	return tPointerEmbeddedMiddle{config: *deps.TEmbeddedEmbeddedConfig}, nil
 }
 
 func (tEmbeddedPointerMiddleProvider) Cleanup(context.Context, tPointerEmbeddedMiddle) error {
@@ -246,14 +246,14 @@ func (tEmbeddedPointerMiddleProvider) Cleanup(context.Context, tPointerEmbeddedM
 
 type tPointerProvider struct{}
 
-func (tPointerProvider) GetInstance(_ context.Context, deps *tPointerDeps) tMiddle {
+func (tPointerProvider) GetInstance(_ context.Context, deps *tPointerDeps) (tMiddle, error) {
 	if deps == nil {
 		return tMiddle{
 			leaf: tLeaf{v: 42},
-		}
+		}, nil
 	}
 
-	return tMiddle{leaf: deps.Leaf}
+	return tMiddle{leaf: deps.Leaf}, nil
 }
 func (tPointerProvider) Cleanup(context.Context, tMiddle) error { return nil }
 
@@ -274,8 +274,8 @@ func TestBuildInstance_embeddedStructDependencyUsesPromotedFields(t *testing.T) 
 
 	builder := NewBuilder()
 	require.NoError(t, AddProvider[string, struct{}](builder, ProviderFuncNoClean(
-		func(context.Context, struct{}) string {
-			return testValue
+		func(context.Context, struct{}) (string, error) {
+			return testValue, nil
 		},
 	)))
 	require.NoError(t, AddProvider[tEmbeddedMiddle, tEmbeddedMiddleDeps](builder, tEmbeddedMiddleProvider{}))
@@ -290,8 +290,8 @@ func TestBuildInstance_embeddedPointerStructDependencyUsesPromotedFields(t *test
 
 	builder := NewBuilder()
 	require.NoError(t, AddProvider[string, struct{}](builder, ProviderFuncNoClean(
-		func(context.Context, struct{}) string {
-			return testValue
+		func(context.Context, struct{}) (string, error) {
+			return testValue, nil
 		},
 	)))
 	require.NoError(t, AddProvider[tPointerEmbeddedMiddle, tEmbeddedMiddlePointerDeps](
@@ -308,6 +308,29 @@ func TestGetArgsTypes_embeddedStructDependencyUsesPromotedFields(t *testing.T) {
 
 	types := getArgsTypes(reflectTypeOf[tEmbeddedMiddleDeps]())
 	require.Equal(t, []reflect.Type{reflectTypeOf[string]()}, types)
+}
+
+type tNilIface interface {
+	Do()
+}
+
+type tNilIfaceProvider struct{}
+
+func (tNilIfaceProvider) GetInstance(context.Context, struct{}) (tNilIface, error) {
+	return nil, nil //nolint:nilnil // for test it's ok
+}
+
+func (tNilIfaceProvider) Cleanup(context.Context, tNilIface) error { return nil }
+
+func TestBuildInstance_interfaceProviderCanReturnTypedNil(t *testing.T) {
+	t.Parallel()
+
+	builder := NewBuilder()
+	require.NoError(t, AddProvider[tNilIface, struct{}](builder, tNilIfaceProvider{}))
+
+	got, err := BuildInstance[tNilIface](context.Background(), builder)
+	require.NoError(t, err)
+	require.Nil(t, got)
 }
 
 func splitNonEmptyLines(str string) []string {

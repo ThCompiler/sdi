@@ -78,7 +78,6 @@ linters:
       - tools$
       - vendor$
       - \.git$
-      - third_party$
       - builtin$
       - examples$
 formatters:

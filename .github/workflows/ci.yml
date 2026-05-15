@@ -33,6 +33,22 @@ jobs:
         env:
           CHECK: 1
         run: bash ./.github/scripts/version.sh $(cat ./.version)
+
+      - name: Check Changelog
+        run: |
+          set -euo pipefail
+          version="$(cat ./.version)"
+
+          if [ ! -f CHANGELOG.md ]; then
+            echo "CHANGELOG.md is missing"
+            exit 1
+          fi
+
+          if ! sh ./.github/scripts/changes.sh "$version" | awk 'NF { found=1 } END { exit !found }'; then
+            echo "CHANGELOG.md has no entry for ${version}"
+            exit 1
+          fi
+
   lint:
     runs-on: ubuntu-latest
     permissions:

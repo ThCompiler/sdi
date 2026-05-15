@@ -178,16 +178,18 @@ func TestDependencyGraph_getDependencyTree_pointerDoesNotImplyValue(t *testing.T
 func TestDependencyGraph_addInstance_errors(t *testing.T) {
 	t.Parallel()
 
-	testsCases := []struct {
+	testCases := []struct {
 		name      string
-		setup     func(*dependencyGraph)
+		setup     func(*testing.T, *dependencyGraph)
 		info      instanceInfo
 		deps      []reflect.Type
 		expectErr error
 	}{
 		{
 			name: "duplicate instance type",
-			setup: func(g *dependencyGraph) {
+			setup: func(t *testing.T, g *dependencyGraph) {
+				t.Helper()
+
 				require.NoError(t, g.addInstance(
 					instanceInfo{
 						instanceType: reflect.TypeFor[gLeaf](),
@@ -204,7 +206,7 @@ func TestDependencyGraph_addInstance_errors(t *testing.T) {
 		},
 		{
 			name:  "dependency not found",
-			setup: func(*dependencyGraph) {},
+			setup: func(*testing.T, *dependencyGraph) {},
 			info: instanceInfo{
 				instanceType: reflect.TypeFor[gRoot](), argsType: reflect.TypeFor[gMiddle](), provider: struct{}{},
 			},
@@ -213,12 +215,12 @@ func TestDependencyGraph_addInstance_errors(t *testing.T) {
 		},
 	}
 
-	for _, tc := range testsCases {
+	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
 			graph := newDependencyGraph()
-			tc.setup(graph)
+			tc.setup(t, graph)
 
 			err := graph.addInstance(tc.info, tc.deps)
 			require.ErrorIs(t, err, tc.expectErr)
