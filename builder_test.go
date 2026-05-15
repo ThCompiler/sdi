@@ -3,11 +3,14 @@ package sdi
 import (
 	"bytes"
 	"context"
+	"io"
 	"reflect"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
+
+const testValue = "value"
 
 type (
 	tLeaf   struct{ v int }
@@ -38,123 +41,105 @@ func (tRootProvider) GetInstance(_ context.Context, deps tRootDeps) (tRoot, erro
 }
 func (tRootProvider) Cleanup(context.Context, tRoot) error { return nil }
 
-func TestShowDependencies_success(t *testing.T) {
+type errWriter struct{}
+
+func (errWriter) Write([]byte) (int, error) { return 0, context.DeadlineExceeded }
+
+func TestShowDependencies(t *testing.T) {
 	t.Parallel()
 
-	builder := NewBuilder()
-	require.NoError(t, AddProvider[tLeaf, struct{}](builder, tLeafProvider{}))
-	require.NoError(t, AddProvider[tMiddle, tMiddleDeps](builder, tMiddleProvider{}))
-	require.NoError(t, AddProvider[tRoot, tRootDeps](builder, tRootProvider{}))
+	const nameSuccess = "success"
 
-	var buf bytes.Buffer
-
-	_, err := ShowDependencies[tRoot](builder, &buf)
-	require.NoError(t, err)
-
-	// Order is not stable due to DFS traversal; validate as a set.
-	lines := splitNonEmptyLines(buf.String())
-	require.ElementsMatch(t, []string{
-		"sdi.tRoot --> sdi.tMiddle",
-		"sdi.tMiddle --> sdi.tLeaf",
-	}, lines)
-}
-
-func TestShowDependencies_builderNotInitialized(t *testing.T) {
-	t.Parallel()
-
-	testCases := []struct {
-		name    string
-		builder *Builder
+	testsCases := []struct {
+		name string
+		run  func(*testing.T)
 	}{
-		{
-			name:    "nil builder",
-			builder: nil,
-		},
-		{
-			name: "nil graph",
-			builder: &Builder{
-				graph: nil,
-			},
-		},
+		{name: nameSuccess, run: testShowDependenciesSuccess},
+		{name: "builder not initialized: nil builder", run: testShowDependenciesBuilderNotInitializedNilBuilder},
+		{name: "builder not initialized: nil graph", run: testShowDependenciesBuilderNotInitializedNilGraph},
+		{name: "unknown instance", run: testShowDependenciesUnknownInstance},
+		{name: "output write error is wrapped", run: testShowDependenciesWriteError},
 	}
 
-	for _, tc := range testCases {
+	for _, tc := range testsCases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-
-			var buf bytes.Buffer
-
-			_, err := ShowDependencies[tRoot](tc.builder, &buf)
-			require.ErrorIs(t, err, ErrBuilderNotInitialized)
+			tc.run(t)
 		})
 	}
 }
 
-func TestShowDependencies_unknownInstance(t *testing.T) {
+func TestAddProvider(t *testing.T) {
 	t.Parallel()
 
-	b := NewBuilder()
+	const nameSuccess = "success"
 
-	var buf bytes.Buffer
+	testsCases := []struct {
+		name string
+		run  func(*testing.T)
+	}{
+		{name: "builder not initialized: nil builder", run: testAddProviderBuilderNotInitializedNilBuilder},
+		{name: "builder not initialized: nil graph", run: testAddProviderBuilderNotInitializedNilGraph},
+		{name: "invalid provider: nil", run: testAddProviderInvalidProviderNil},
+		{name: "dependency not found", run: testAddProviderDependencyNotFound},
+		{name: "dependency already exists", run: testAddProviderDependencyAlreadyExists},
+		{name: nameSuccess, run: testAddProviderSuccess},
+	}
 
-	_, err := ShowDependencies[tRoot](b, &buf)
-	require.ErrorIs(t, err, ErrUnknownInstanceType)
+	for _, tc := range testsCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			tc.run(t)
+		})
+	}
 }
 
-type errWriter struct{}
-
-func (errWriter) Write([]byte) (int, error) {
-	return 0, context.DeadlineExceeded
-}
-
-func TestShowDependencies_writeError(t *testing.T) {
+func TestBuildInstance_success(t *testing.T) {
 	t.Parallel()
 
-	builder := NewBuilder()
-	require.NoError(t, AddProvider[tLeaf, struct{}](builder, tLeafProvider{}))
+	testsCases := []struct {
+		name string
+		run  func(*testing.T)
+	}{
+		{
+			name: "struct dependencies",
+			run:  testBuildInstanceStructDepsSuccess,
+		},
+		{
+			name: "pointer dependencies struct",
+			run:  testBuildInstancePointerStructDepsSuccess,
+		},
+		{
+			name: "embedded struct dependencies use promoted fields",
+			run:  testBuildInstanceEmbeddedStructDependencyUsesPromotedFields,
+		},
+		{
+			name: "embedded pointer struct dependencies use promoted fields",
+			run:  testBuildInstanceEmbeddedPointerStructDependencyUsesPromotedFields,
+		},
+		{
+			name: "interface provider can return typed nil",
+			run:  testBuildInstanceInterfaceProviderCanReturnTypedNil,
+		},
+	}
 
-	_, err := ShowDependencies[tLeaf](builder, errWriter{})
-	require.ErrorIs(t, err, ErrOutputWriteFailed)
+	for _, tc := range testsCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			tc.run(t)
+		})
+	}
 }
 
-func TestBuildInstance_structDeps_success(t *testing.T) {
-	t.Parallel()
+func testBuildInstanceStructDepsSuccess(t *testing.T) {
+	t.Helper()
 
-	b := NewBuilder()
-	require.NoError(t, AddProvider[tLeaf, struct{}](b, tLeafProvider{}))
-	require.NoError(t, AddProvider[tMiddle, tMiddleDeps](b, tMiddleProvider{}))
-	require.NoError(t, AddProvider[tRoot, tRootDeps](b, tRootProvider{}))
+	b := newBuilderWithLeafMiddleRoot(t)
 
 	got, err := BuildInstance[tRoot](context.Background(), b)
 	require.NoError(t, err)
 	require.Equal(t, 42, got.mid.leaf.v)
-}
-
-func TestAddProvider_builderNotInitialized(t *testing.T) {
-	t.Parallel()
-
-	testCases := []struct {
-		name    string
-		builder *Builder
-	}{
-		{
-			name:    "nil builder",
-			builder: nil,
-		},
-		{
-			name:    "nil graph",
-			builder: &Builder{graph: nil},
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-
-			err := AddProvider[tLeaf, struct{}](tc.builder, tLeafProvider{})
-			require.ErrorIs(t, err, ErrBuilderNotInitialized)
-		})
-	}
 }
 
 func TestBuildInstance_errors(t *testing.T) {
@@ -257,8 +242,8 @@ func (tPointerProvider) GetInstance(_ context.Context, deps *tPointerDeps) (tMid
 }
 func (tPointerProvider) Cleanup(context.Context, tMiddle) error { return nil }
 
-func TestBuildInstance_pointerStructDeps_success(t *testing.T) {
-	t.Parallel()
+func testBuildInstancePointerStructDepsSuccess(t *testing.T) {
+	t.Helper()
 
 	builder := NewBuilder()
 	require.NoError(t, AddProvider[tLeaf, struct{}](builder, tLeafProvider{}))
@@ -269,8 +254,8 @@ func TestBuildInstance_pointerStructDeps_success(t *testing.T) {
 	require.Equal(t, 42, got.leaf.v)
 }
 
-func TestBuildInstance_embeddedStructDependencyUsesPromotedFields(t *testing.T) {
-	t.Parallel()
+func testBuildInstanceEmbeddedStructDependencyUsesPromotedFields(t *testing.T) {
+	t.Helper()
 
 	builder := NewBuilder()
 	require.NoError(t, AddProvider[string, struct{}](builder, ProviderFuncNoClean(
@@ -285,8 +270,8 @@ func TestBuildInstance_embeddedStructDependencyUsesPromotedFields(t *testing.T) 
 	require.Equal(t, testValue, got.config.Value)
 }
 
-func TestBuildInstance_embeddedPointerStructDependencyUsesPromotedFields(t *testing.T) {
-	t.Parallel()
+func testBuildInstanceEmbeddedPointerStructDependencyUsesPromotedFields(t *testing.T) {
+	t.Helper()
 
 	builder := NewBuilder()
 	require.NoError(t, AddProvider[string, struct{}](builder, ProviderFuncNoClean(
@@ -303,13 +288,6 @@ func TestBuildInstance_embeddedPointerStructDependencyUsesPromotedFields(t *test
 	require.Equal(t, testValue, got.config.Value)
 }
 
-func TestGetArgsTypes_embeddedStructDependencyUsesPromotedFields(t *testing.T) {
-	t.Parallel()
-
-	types := getArgsTypes(reflectTypeOf[tEmbeddedMiddleDeps]())
-	require.Equal(t, []reflect.Type{reflectTypeOf[string]()}, types)
-}
-
 type tNilIface interface {
 	Do()
 }
@@ -322,8 +300,8 @@ func (tNilIfaceProvider) GetInstance(context.Context, struct{}) (tNilIface, erro
 
 func (tNilIfaceProvider) Cleanup(context.Context, tNilIface) error { return nil }
 
-func TestBuildInstance_interfaceProviderCanReturnTypedNil(t *testing.T) {
-	t.Parallel()
+func testBuildInstanceInterfaceProviderCanReturnTypedNil(t *testing.T) {
+	t.Helper()
 
 	builder := NewBuilder()
 	require.NoError(t, AddProvider[tNilIface, struct{}](builder, tNilIfaceProvider{}))
@@ -331,6 +309,501 @@ func TestBuildInstance_interfaceProviderCanReturnTypedNil(t *testing.T) {
 	got, err := BuildInstance[tNilIface](context.Background(), builder)
 	require.NoError(t, err)
 	require.Nil(t, got)
+}
+
+func newBuilderWithLeafMiddleRoot(t *testing.T) *Builder {
+	t.Helper()
+
+	b := NewBuilder()
+	require.NoError(t, AddProvider[tLeaf, struct{}](b, tLeafProvider{}))
+	require.NoError(t, AddProvider[tMiddle, tMiddleDeps](b, tMiddleProvider{}))
+	require.NoError(t, AddProvider[tRoot, tRootDeps](b, tRootProvider{}))
+
+	return b
+}
+
+func testShowDependenciesSuccess(t *testing.T) {
+	t.Helper()
+
+	b := newBuilderWithLeafMiddleRoot(t)
+
+	var buf bytes.Buffer
+
+	n, err := ShowDependencies[tRoot](b, &buf)
+	require.NoError(t, err)
+	require.Equal(t, int64(buf.Len()), n)
+	require.ElementsMatch(t, []string{
+		"sdi.tRoot --> sdi.tMiddle",
+		"sdi.tMiddle --> sdi.tLeaf",
+	}, splitNonEmptyLines(buf.String()))
+}
+
+func testShowDependenciesBuilderNotInitializedNilBuilder(t *testing.T) {
+	t.Helper()
+
+	var buf bytes.Buffer
+
+	_, err := ShowDependencies[tRoot](nil, &buf)
+	require.ErrorIs(t, err, ErrBuilderNotInitialized)
+}
+
+func testShowDependenciesBuilderNotInitializedNilGraph(t *testing.T) {
+	t.Helper()
+
+	b := &Builder{graph: nil}
+
+	var buf bytes.Buffer
+
+	_, err := ShowDependencies[tRoot](b, &buf)
+	require.ErrorIs(t, err, ErrBuilderNotInitialized)
+}
+
+func testShowDependenciesUnknownInstance(t *testing.T) {
+	t.Helper()
+
+	b := NewBuilder()
+
+	var buf bytes.Buffer
+
+	_, err := ShowDependencies[tRoot](b, &buf)
+	require.ErrorIs(t, err, ErrUnknownInstanceType)
+}
+
+func testShowDependenciesWriteError(t *testing.T) {
+	t.Helper()
+
+	b := NewBuilder()
+	require.NoError(t, AddProvider[tLeaf, struct{}](b, tLeafProvider{}))
+
+	_, err := ShowDependencies[tLeaf](b, errWriter{})
+	require.ErrorIs(t, err, ErrOutputWriteFailed)
+}
+
+func testAddProviderBuilderNotInitializedNilBuilder(t *testing.T) {
+	t.Helper()
+
+	err := AddProvider[tLeaf, struct{}](nil, tLeafProvider{})
+	require.ErrorIs(t, err, ErrBuilderNotInitialized)
+}
+
+func testAddProviderBuilderNotInitializedNilGraph(t *testing.T) {
+	t.Helper()
+
+	b := &Builder{graph: nil}
+	err := AddProvider[tLeaf, struct{}](b, tLeafProvider{})
+	require.ErrorIs(t, err, ErrBuilderNotInitialized)
+}
+
+func testAddProviderInvalidProviderNil(t *testing.T) {
+	t.Helper()
+
+	var nilProvider Provider[tLeaf, struct{}]
+
+	b := NewBuilder()
+	err := AddProvider[tLeaf, struct{}](b, nilProvider)
+	require.ErrorIs(t, err, ErrInvalidProvider)
+}
+
+func testAddProviderDependencyNotFound(t *testing.T) {
+	t.Helper()
+
+	b := NewBuilder()
+	err := AddProvider[tRoot, tRootDeps](b, tRootProvider{})
+	require.ErrorIs(t, err, ErrDependencyNotFound)
+}
+
+func testAddProviderDependencyAlreadyExists(t *testing.T) {
+	t.Helper()
+
+	b := NewBuilder()
+	require.NoError(t, AddProvider[tLeaf, struct{}](b, tLeafProvider{}))
+
+	err := AddProvider[tLeaf, struct{}](b, tLeafProvider{})
+	require.ErrorIs(t, err, ErrDependencyAlreadyExists)
+}
+
+func testAddProviderSuccess(t *testing.T) {
+	t.Helper()
+
+	b := NewBuilder()
+	require.NoError(t, AddProvider[tLeaf, struct{}](b, tLeafProvider{}))
+	require.NoError(t, AddProvider[tMiddle, tMiddleDeps](b, tMiddleProvider{}))
+}
+
+func TestBuildInstance_invalidProviderWithoutGetInstance(t *testing.T) {
+	t.Parallel()
+
+	_, err := buildInstance(context.Background(), instanceInfo{
+		instanceType: reflectTypeOf[string](),
+		argsType:     reflectTypeOf[struct{}](),
+		provider:     struct{}{},
+	}, map[reflect.Type]reflect.Value{})
+
+	require.ErrorIs(t, err, ErrInvalidProvider)
+}
+
+func TestBuildInstance_invalidProviderWrongType(t *testing.T) {
+	t.Parallel()
+
+	provider := ProviderFuncNoClean[bool, struct{}](
+		func(context.Context, struct{}) (bool, error) { return true, nil },
+	)
+
+	_, err := buildInstance(context.Background(), instanceInfo{
+		instanceType: reflectTypeOf[string](),
+		argsType:     reflectTypeOf[struct{}](),
+		provider:     provider,
+	}, map[reflect.Type]reflect.Value{})
+
+	require.ErrorIs(t, err, ErrInvalidProvider)
+}
+
+func TestBuildDependenciesArg_missingSingleDependency(t *testing.T) {
+	t.Parallel()
+
+	_, err := buildDependenciesArg(reflectTypeOf[string](), map[reflect.Type]reflect.Value{})
+	require.ErrorIs(t, err, ErrInvalidDependencyValue)
+}
+
+func TestFillStructDependencies_missingDependency(t *testing.T) {
+	t.Parallel()
+
+	_, err := fillStructDependencies(reflectTypeOf[struct{ Value string }](), map[reflect.Type]reflect.Value{})
+	require.ErrorIs(t, err, ErrInvalidDependencyValue)
+}
+
+func TestGetResult_invalidValue(t *testing.T) {
+	t.Parallel()
+
+	requireType := reflectTypeOf[string]()
+
+	_, err := getResult(
+		[]reflect.Value{{}, reflect.Zero(reflect.TypeFor[error]())},
+		requireType,
+	)
+
+	require.ErrorIs(t, err, ErrDependencyBuildFailed)
+}
+
+func TestGetResult_convertsCompatibleValue(t *testing.T) {
+	t.Parallel()
+
+	requireType := reflectTypeOf[aliasInt]()
+
+	value, err := getResult(
+		[]reflect.Value{reflect.ValueOf(41), reflect.Zero(reflect.TypeFor[error]())},
+		requireType,
+	)
+
+	require.NoError(t, err)
+	require.Equal(t, aliasInt(41), value.Interface())
+}
+
+func TestGetDepValue_convertsCompatibleValue(t *testing.T) {
+	t.Parallel()
+
+	value, err := getDepValue(reflect.ValueOf(41), reflectTypeOf[aliasInt]())
+
+	require.NoError(t, err)
+	require.Equal(t, aliasInt(41), value.Interface())
+}
+
+func TestGetDepValue_invalidType(t *testing.T) {
+	t.Parallel()
+
+	_, err := getDepValue(reflect.ValueOf(io.ErrUnexpectedEOF), reflectTypeOf[string]())
+	require.ErrorIs(t, err, ErrInvalidDependencyValue)
+}
+
+func TestGetArgsTypes(t *testing.T) {
+	t.Parallel()
+
+	testsCases := []struct {
+		name string
+		arg  reflect.Type
+		want []reflect.Type
+	}{
+		{
+			name: "returns single non-struct dependency",
+			arg:  reflectTypeOf[string](),
+			want: []reflect.Type{reflectTypeOf[string]()},
+		},
+		{
+			name: "embedded struct dependency uses promoted fields",
+			arg:  reflectTypeOf[tEmbeddedMiddleDeps](),
+			want: []reflect.Type{reflectTypeOf[string]()},
+		},
+	}
+
+	for _, tc := range testsCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			types := getArgsTypes(tc.arg)
+			require.Equal(t, tc.want, types)
+		})
+	}
+}
+
+func TestIsArgField(t *testing.T) {
+	t.Parallel()
+
+	type Embedded struct{ X int }
+
+	type S struct {
+		Embedded
+
+		Exported   string
+		unexported string
+	}
+
+	var s S
+
+	s.unexported = testValue
+
+	settable := reflect.ValueOf(&s).Elem()
+	nonSettable := reflect.ValueOf(s)
+
+	testCases := []struct {
+		name      string
+		structVal reflect.Value
+		fieldName string
+		want      bool
+	}{
+		{
+			name:      "exported and settable",
+			structVal: settable,
+			fieldName: "Exported",
+			want:      true,
+		},
+		{
+			name:      "exported but not settable",
+			structVal: nonSettable,
+			fieldName: "Exported",
+			want:      false,
+		},
+		{
+			name:      "unexported",
+			structVal: settable,
+			fieldName: "unexported",
+			want:      false,
+		},
+		{
+			name:      "anonymous",
+			structVal: settable,
+			fieldName: "Embedded",
+			want:      false,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			sf, fv := mustField(t, tc.structVal, tc.fieldName)
+			require.Equal(t, tc.want, isArgField(sf, fv))
+		})
+	}
+}
+
+func TestIsEmbeddedStructField(t *testing.T) {
+	t.Parallel()
+
+	type (
+		EmbeddedPtr struct{ V string }
+		EmbeddedVal struct{ V string }
+		S           struct {
+			*EmbeddedPtr
+			EmbeddedVal
+
+			Named *EmbeddedPtr
+		}
+	)
+
+	var s S
+
+	settable := reflect.ValueOf(&s).Elem()
+	nonSettable := reflect.ValueOf(s)
+
+	testCases := []struct {
+		name      string
+		structVal reflect.Value
+		fieldName string
+		want      bool
+	}{
+		{
+			name:      "anonymous pointer and settable",
+			structVal: settable,
+			fieldName: "EmbeddedPtr",
+			want:      true,
+		},
+		{
+			name:      "anonymous but not a pointer",
+			structVal: settable,
+			fieldName: "EmbeddedVal",
+			want:      false,
+		},
+		{
+			name:      "pointer but not anonymous",
+			structVal: settable,
+			fieldName: "Named",
+			want:      false,
+		},
+		{
+			name:      "anonymous pointer but not settable",
+			structVal: nonSettable,
+			fieldName: "EmbeddedPtr",
+			want:      false,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			sf, fv := mustField(t, tc.structVal, tc.fieldName)
+			require.Equal(t, tc.want, isEmbeddedStructField(sf, fv))
+		})
+	}
+}
+
+func TestProcessDependenciesStruct_nonStructReturnsError(t *testing.T) {
+	t.Parallel()
+
+	_, err := processDependenciesStruct(reflect.TypeFor[string](), func(reflect.Value) error {
+		return nil
+	})
+	require.ErrorIs(t, err, ErrInvalidDependencyInput)
+}
+
+func TestProcessDependenciesStruct_initializesEmbeddedPointerStruct(t *testing.T) {
+	t.Parallel()
+
+	type (
+		Embedded struct{ Value string }
+		Outer    struct{ *Embedded }
+	)
+
+	val, err := processDependenciesStruct(reflect.TypeFor[Outer](), func(fv reflect.Value) error {
+		if fv.Kind() == reflect.String {
+			fv.SetString(testValue)
+		}
+
+		return nil
+	})
+	require.NoError(t, err)
+
+	embeddedField := val.FieldByName("Embedded")
+	require.True(t, embeddedField.IsValid())
+	require.Equal(t, reflect.Pointer, embeddedField.Kind())
+	require.False(t, embeddedField.IsNil())
+
+	// Value is promoted from Embedded; this is exactly what processDependenciesStruct enables for embedded pointers.
+	valueField := val.FieldByName("Value")
+	require.True(t, valueField.IsValid())
+	require.Equal(t, testValue, valueField.String())
+}
+
+func TestGetErrorValue(t *testing.T) {
+	t.Parallel()
+
+	typedNilErrVal := typedNilErrValue()
+	testCases := []struct {
+		name   string
+		errVal reflect.Value
+		assert func(*testing.T, error)
+	}{
+		{
+			name:   "invalid value",
+			errVal: reflect.Value{},
+			assert: func(t *testing.T, err error) {
+				t.Helper()
+				require.ErrorIs(t, err, ErrInvalidProvider)
+			},
+		},
+		{
+			name:   "wrong type",
+			errVal: reflect.ValueOf(123),
+			assert: func(t *testing.T, err error) {
+				t.Helper()
+				require.ErrorIs(t, err, ErrInvalidProvider)
+			},
+		},
+		{
+			name:   "nil error interface",
+			errVal: reflect.Zero(reflect.TypeFor[error]()),
+			assert: func(t *testing.T, err error) {
+				t.Helper()
+				require.NoError(t, err)
+			},
+		},
+		{
+			name:   "non-nil error",
+			errVal: reflect.ValueOf(io.EOF),
+			assert: func(t *testing.T, err error) {
+				t.Helper()
+				require.ErrorIs(t, err, io.EOF)
+			},
+		},
+		{
+			name:   "typed nil error (Go semantics: non-nil error interface)",
+			errVal: typedNilErrVal,
+			assert: func(t *testing.T, err error) {
+				t.Helper()
+				require.Error(t, err)
+				require.ErrorAs(t, err, new(*typedNilError))
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			tc.assert(t, getErrorValue(tc.errVal))
+		})
+	}
+}
+
+func TestGetErrorValue_returnsInvalidProviderErrorTypeString(t *testing.T) {
+	t.Parallel()
+
+	err := getErrorValue(reflect.ValueOf(123))
+	require.ErrorIs(t, err, ErrInvalidProvider)
+
+	// Ensure it includes the reported type name (best-effort assertion).
+	require.Contains(t, err.Error(), "int")
+}
+
+func mustField(t *testing.T, structVal reflect.Value, fieldName string) (reflect.StructField, reflect.Value) {
+	t.Helper()
+
+	sf, ok := structVal.Type().FieldByName(fieldName)
+	require.True(t, ok)
+
+	fv := structVal.FieldByName(fieldName)
+	require.True(t, fv.IsValid())
+
+	return sf, fv
+}
+
+// Small local type to build a typed-nil error value.
+type typedNilError struct{}
+
+func (*typedNilError) Error() string { return "typed-nil" }
+
+func typedNilErrValue() reflect.Value {
+	var e *typedNilError
+
+	var err error = e
+
+	return reflect.ValueOf(err)
+}
+
+type aliasInt int
+
+func reflectTypeOf[T any]() reflect.Type {
+	return reflect.TypeFor[T]()
 }
 
 func splitNonEmptyLines(str string) []string {
