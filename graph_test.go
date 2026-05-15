@@ -113,7 +113,7 @@ func TestDependencyGraph_getDependencyTreeWithTriangleDeps(t *testing.T) {
 	}, lines)
 }
 
-func TestDependencyGraph_getDependencyTree_shared_leafPointer(t *testing.T) {
+func TestDependencyGraph_getDependencyTree_shared_leafNode(t *testing.T) {
 	t.Parallel()
 
 	graph := newDependencyGraph()

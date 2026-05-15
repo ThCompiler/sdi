@@ -33,7 +33,7 @@ tidy:
 # Get test coverage
 .PHONY: test-coverage
 test-coverage: install
-	@echo "Run test with coverage"
+	@echo "Run tests with coverage"
 	$(GO) tool gotestsum --junitfile report.xml --format testname -- -p 1 ./... -cover -count=1 -coverprofile cover_full.out
 	@grep -v "example" cover_full.out > cover.out
 	$(GO) tool cover -func cover.out
@@ -49,5 +49,9 @@ changelog:
 
 .PHONY: release
 release:
+	@if [ -z "$(VERSION)" ]; then \
+		echo "VERSION is required. Usage: make release VERSION=<tag>"; \
+		exit 1; \
+	fi
 	git tag $(VERSION) && \
 	git push origin $(VERSION)

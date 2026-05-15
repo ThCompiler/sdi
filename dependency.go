@@ -81,8 +81,8 @@ func ProviderFunc[instance io.Closer, dependencies any](
 	}
 }
 
-// ProviderFunc2 adapts constructor and cleanup functions into a Provider.
-func ProviderFunc2[instance any, dependencies any](
+// ProviderFuncWithCleanup adapts constructor and cleanup functions into a Provider.
+func ProviderFuncWithCleanup[instance any, dependencies any](
 	newFunc NewInstanceFunc[instance, dependencies],
 	cleanFunc func(ctx context.Context, instance instance) error,
 ) Provider[instance, dependencies] {

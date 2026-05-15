@@ -230,7 +230,7 @@ func getResult(out []reflect.Value, expectedType reflect.Type) (reflect.Value, e
 
 	if err := getErrorValue(out[1]); err != nil {
 		return reflect.Value{}, fmt.Errorf(
-			"failed build %v with: %w", expectedType, err,
+			"failed to build %v with: %w", expectedType, err,
 		)
 	}
 
@@ -313,8 +313,8 @@ func getArgsTypes(args reflect.Type) []reflect.Type {
 		return nil
 	})
 	if err != nil {
-		// if error appears here, it means that package have internal unreachable bug,
-		// so we panic to make it visible instead of silently returning wrong result.
+		// if an error appears here, it means that the package has an internal unreachable bug,
+		// so we panic to make it visible instead of silently returning the wrong result.
 		panic(err)
 	}
 
