@@ -133,7 +133,7 @@ func ShowDependencies[T any](builder *Builder, writer io.Writer) (int64, error) 
 
 	n, err := tree.WriteTo(writer)
 	if err != nil {
-		return 0, fmt.Errorf("%w: %w", ErrOutputWriteFailed, err)
+		return n, fmt.Errorf("%w: %w", ErrOutputWriteFailed, err)
 	}
 
 	return n, nil
