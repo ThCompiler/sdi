@@ -170,8 +170,8 @@ func TestBuildInstance_errors(t *testing.T) {
 				t.Helper()
 				require.NoError(t, builder.graph.addInstance(
 					instanceInfo{
-						instanceType: reflectTypeOf[tLeaf](),
-						argsType:     reflectTypeOf[struct{}](),
+						instanceType: reflect.TypeFor[tLeaf](),
+						argsType:     reflect.TypeFor[struct{}](),
 						provider:     struct{}{},
 					},
 					nil,
@@ -489,8 +489,8 @@ func TestBuildInstance_invalidProviderWithoutGetInstance(t *testing.T) {
 	t.Parallel()
 
 	_, err := buildInstance(context.Background(), instanceInfo{
-		instanceType: reflectTypeOf[string](),
-		argsType:     reflectTypeOf[struct{}](),
+		instanceType: reflect.TypeFor[string](),
+		argsType:     reflect.TypeFor[struct{}](),
 		provider:     struct{}{},
 	}, map[reflect.Type]reflect.Value{})
 
@@ -505,8 +505,8 @@ func TestBuildInstance_invalidProviderWrongType(t *testing.T) {
 	)
 
 	_, err := buildInstance(context.Background(), instanceInfo{
-		instanceType: reflectTypeOf[string](),
-		argsType:     reflectTypeOf[struct{}](),
+		instanceType: reflect.TypeFor[string](),
+		argsType:     reflect.TypeFor[struct{}](),
 		provider:     provider,
 	}, map[reflect.Type]reflect.Value{})
 
@@ -516,21 +516,21 @@ func TestBuildInstance_invalidProviderWrongType(t *testing.T) {
 func TestBuildDependenciesArg_missingSingleDependency(t *testing.T) {
 	t.Parallel()
 
-	_, err := buildDependenciesArg(reflectTypeOf[string](), map[reflect.Type]reflect.Value{})
+	_, err := buildDependenciesArg(reflect.TypeFor[string](), map[reflect.Type]reflect.Value{})
 	require.ErrorIs(t, err, ErrInvalidDependencyValue)
 }
 
 func TestFillStructDependencies_missingDependency(t *testing.T) {
 	t.Parallel()
 
-	_, err := fillStructDependencies(reflectTypeOf[struct{ Value string }](), map[reflect.Type]reflect.Value{})
+	_, err := fillStructDependencies(reflect.TypeFor[struct{ Value string }](), map[reflect.Type]reflect.Value{})
 	require.ErrorIs(t, err, ErrInvalidDependencyValue)
 }
 
 func TestGetResult_invalidValue(t *testing.T) {
 	t.Parallel()
 
-	requireType := reflectTypeOf[string]()
+	requireType := reflect.TypeFor[string]()
 
 	_, err := getResult(
 		[]reflect.Value{{}, reflect.Zero(reflect.TypeFor[error]())},
@@ -543,7 +543,7 @@ func TestGetResult_invalidValue(t *testing.T) {
 func TestGetResult_convertsCompatibleValue(t *testing.T) {
 	t.Parallel()
 
-	requireType := reflectTypeOf[aliasInt]()
+	requireType := reflect.TypeFor[aliasInt]()
 
 	value, err := getResult(
 		[]reflect.Value{reflect.ValueOf(41), reflect.Zero(reflect.TypeFor[error]())},
@@ -557,7 +557,7 @@ func TestGetResult_convertsCompatibleValue(t *testing.T) {
 func TestGetDepValue_convertsCompatibleValue(t *testing.T) {
 	t.Parallel()
 
-	value, err := getDepValue(reflect.ValueOf(41), reflectTypeOf[aliasInt]())
+	value, err := getDepValue(reflect.ValueOf(41), reflect.TypeFor[aliasInt]())
 
 	require.NoError(t, err)
 	require.Equal(t, aliasInt(41), value.Interface())
@@ -566,7 +566,7 @@ func TestGetDepValue_convertsCompatibleValue(t *testing.T) {
 func TestGetDepValue_invalidType(t *testing.T) {
 	t.Parallel()
 
-	_, err := getDepValue(reflect.ValueOf(io.ErrUnexpectedEOF), reflectTypeOf[string]())
+	_, err := getDepValue(reflect.ValueOf(io.ErrUnexpectedEOF), reflect.TypeFor[string]())
 	require.ErrorIs(t, err, ErrInvalidDependencyValue)
 }
 
@@ -580,13 +580,13 @@ func TestGetArgsTypes(t *testing.T) {
 	}{
 		{
 			name: "returns single non-struct dependency",
-			arg:  reflectTypeOf[string](),
-			want: []reflect.Type{reflectTypeOf[string]()},
+			arg:  reflect.TypeFor[string](),
+			want: []reflect.Type{reflect.TypeFor[string]()},
 		},
 		{
 			name: "embedded struct dependency uses promoted fields",
-			arg:  reflectTypeOf[tEmbeddedMiddleDeps](),
-			want: []reflect.Type{reflectTypeOf[string]()},
+			arg:  reflect.TypeFor[tEmbeddedMiddleDeps](),
+			want: []reflect.Type{reflect.TypeFor[string]()},
 		},
 	}
 
@@ -594,7 +594,8 @@ func TestGetArgsTypes(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			types := getArgsTypes(tc.arg)
+			types, err := getArgsTypes(tc.arg)
+			require.NoError(t, err)
 			require.Equal(t, tc.want, types)
 		})
 	}
@@ -664,6 +665,8 @@ func TestIsArgField(t *testing.T) {
 func TestIsEmbeddedStructField(t *testing.T) {
 	t.Parallel()
 
+	const fieldEmbeddedPtr = "EmbeddedPtr"
+
 	type (
 		EmbeddedPtr struct{ V string }
 		EmbeddedVal struct{ V string }
@@ -675,10 +678,12 @@ func TestIsEmbeddedStructField(t *testing.T) {
 		}
 	)
 
-	var s S
+	base := S{EmbeddedPtr: nil, EmbeddedVal: EmbeddedVal{V: ""}, Named: nil}
+	withEmbedded := S{EmbeddedPtr: &EmbeddedPtr{V: testValue}, EmbeddedVal: EmbeddedVal{V: ""}, Named: nil}
 
-	settable := reflect.ValueOf(&s).Elem()
-	nonSettable := reflect.ValueOf(s)
+	settable := reflect.ValueOf(&base).Elem()
+	settableWithEmbedded := reflect.ValueOf(&withEmbedded).Elem()
+	nonSettable := reflect.ValueOf(base)
 
 	testCases := []struct {
 		name      string
@@ -686,30 +691,11 @@ func TestIsEmbeddedStructField(t *testing.T) {
 		fieldName string
 		want      bool
 	}{
-		{
-			name:      "anonymous pointer and settable",
-			structVal: settable,
-			fieldName: "EmbeddedPtr",
-			want:      true,
-		},
-		{
-			name:      "anonymous but not a pointer",
-			structVal: settable,
-			fieldName: "EmbeddedVal",
-			want:      false,
-		},
-		{
-			name:      "pointer but not anonymous",
-			structVal: settable,
-			fieldName: "Named",
-			want:      false,
-		},
-		{
-			name:      "anonymous pointer but not settable",
-			structVal: nonSettable,
-			fieldName: "EmbeddedPtr",
-			want:      false,
-		},
+		{"anonymous pointer and settable", settable, fieldEmbeddedPtr, true},
+		{"anonymous pointer already initialized", settableWithEmbedded, fieldEmbeddedPtr, false},
+		{"anonymous but not a pointer", settable, "EmbeddedVal", false},
+		{"pointer but not anonymous", settable, "Named", false},
+		{"anonymous pointer but not settable", nonSettable, fieldEmbeddedPtr, false},
 	}
 
 	for _, tc := range testCases {
@@ -856,10 +842,6 @@ func typedNilErrValue() reflect.Value {
 }
 
 type aliasInt int
-
-func reflectTypeOf[T any]() reflect.Type {
-	return reflect.TypeFor[T]()
-}
 
 func splitNonEmptyLines(str string) []string {
 	res := make([]string, 0)

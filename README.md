@@ -35,6 +35,7 @@ sdi.AddProvider[InstanceType, DependenciesType](b, provider)
 
 - If it is a `struct` or pointer to a `struct`, its exported fields are treated as dependencies and are filled by type.
 - Promoted exported fields from embedded structs are treated as dependencies too.
+- For embedded pointer-to-struct fields: SDI will initialize nil embedded pointers only if the embedded field is settable via reflection (i.e. the embedded type/field is exported). Promoted fields behind an unexported embedded pointer are not supported.
 - Anonymous embedded struct fields themselves are skipped.
 - Any other type is treated as a single dependency value.
 

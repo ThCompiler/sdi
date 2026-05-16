@@ -43,13 +43,18 @@ func AddProvider[instance any, dependencies any](builder *Builder, provider Prov
 		return ErrInvalidProvider
 	}
 
+	depsTypes, err := getArgsTypes(reflect.TypeFor[dependencies]())
+	if err != nil {
+		return err
+	}
+
 	return builder.graph.addInstance(
 		instanceInfo{
 			instanceType: reflect.TypeFor[instance](),
 			argsType:     reflect.TypeFor[dependencies](),
 			provider:     once(provider),
 		},
-		getArgsTypes(reflect.TypeFor[dependencies]()),
+		depsTypes,
 	)
 }
 
@@ -294,7 +299,7 @@ func getDepValue(depVal reflect.Value, valueType reflect.Type) (reflect.Value, e
 	)
 }
 
-func getArgsTypes(args reflect.Type) []reflect.Type {
+func getArgsTypes(args reflect.Type) ([]reflect.Type, error) {
 	argsType := args
 
 	if args.Kind() == reflect.Pointer {
@@ -302,7 +307,7 @@ func getArgsTypes(args reflect.Type) []reflect.Type {
 	}
 
 	if argsType.Kind() != reflect.Struct {
-		return []reflect.Type{args}
+		return []reflect.Type{args}, nil
 	}
 
 	resArgs := make([]reflect.Type, 0, argsType.NumField())
@@ -313,12 +318,10 @@ func getArgsTypes(args reflect.Type) []reflect.Type {
 		return nil
 	})
 	if err != nil {
-		// if an error appears here, it means that the package has an internal unreachable bug,
-		// so we panic to make it visible instead of silently returning the wrong result.
-		panic(err)
+		return nil, err
 	}
 
-	return resArgs
+	return resArgs, nil
 }
 
 func processDependenciesStruct(
@@ -333,10 +336,18 @@ func processDependenciesStruct(
 
 	structVal := reflect.New(dependencyType).Elem()
 
+	// reflect.VisibleFields returns fields in the same order as in the struct,
+	// where anonymous fields appear immediately before their promoted fields.
+	// We rely on this to initialize embedded pointer-to-struct fields before
+	// accessing their promoted fields via FieldByIndex.
 	for _, field := range reflect.VisibleFields(structVal.Type()) {
-		fv := structVal.FieldByIndex(field.Index)
+		fv, err := structVal.FieldByIndexErr(field.Index)
+		if err != nil {
+			return reflect.Value{}, fmt.Errorf(
+				"%w: cannot access field %q in %v: %w", ErrInvalidDependencyInput, field.Name, dependencyType, err,
+			)
+		}
 
-		// if struct has an embedded pointer struct field, we initialize it to be able to set its fields later.
 		if isEmbeddedStructField(field, fv) {
 			fv.Set(reflect.New(fv.Type().Elem()))
 
@@ -360,5 +371,8 @@ func isArgField(field reflect.StructField, fieldValue reflect.Value) bool {
 }
 
 func isEmbeddedStructField(field reflect.StructField, fieldValue reflect.Value) bool {
-	return fieldValue.CanSet() && field.Anonymous && fieldValue.Kind() == reflect.Pointer
+	isStruct := field.Type.Kind() == reflect.Pointer && field.Type.Elem().Kind() == reflect.Struct
+	isValid := fieldValue.IsValid() && fieldValue.CanSet()
+
+	return field.Anonymous && isStruct && fieldValue.IsNil() && isValid
 }
