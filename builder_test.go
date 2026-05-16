@@ -664,7 +664,7 @@ func TestIsArgField(t *testing.T) {
 	}
 }
 
-func TestIsEmbeddedStructField(t *testing.T) {
+func TestIsEmbeddedPointerStructField(t *testing.T) {
 	t.Parallel()
 
 	const fieldEmbeddedPtr = "EmbeddedPtr"
@@ -705,7 +705,7 @@ func TestIsEmbeddedStructField(t *testing.T) {
 			t.Parallel()
 
 			sf, fv := mustField(t, tc.structVal, tc.fieldName)
-			require.Equal(t, tc.want, isEmbeddedStructField(sf, fv))
+			require.Equal(t, tc.want, isEmbeddedPointerStructField(sf, fv))
 		})
 	}
 }

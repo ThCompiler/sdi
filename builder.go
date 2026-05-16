@@ -348,7 +348,7 @@ func processDependenciesStruct(
 			)
 		}
 
-		if isEmbeddedStructField(field, fv) {
+		if isEmbeddedPointerStructField(field, fv) {
 			fv.Set(reflect.New(fv.Type().Elem()))
 
 			continue
@@ -370,7 +370,7 @@ func isArgField(field reflect.StructField, fieldValue reflect.Value) bool {
 	return fieldValue.CanSet() && field.IsExported() && !field.Anonymous
 }
 
-func isEmbeddedStructField(field reflect.StructField, fieldValue reflect.Value) bool {
+func isEmbeddedPointerStructField(field reflect.StructField, fieldValue reflect.Value) bool {
 	isStruct := field.Type.Kind() == reflect.Pointer && field.Type.Elem().Kind() == reflect.Struct
 	isValid := fieldValue.IsValid() && fieldValue.CanSet()
 
