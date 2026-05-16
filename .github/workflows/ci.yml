@@ -1,0 +1,130 @@
+name: CI
+
+env:
+  GO_VERSION: ">=1.25.7"
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          cache: true
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Build
+        run: go build ./...
+
+      - name: Check Version
+        env:
+          CHECK: 1
+        run: bash ./.github/scripts/version.sh $(cat ./.version)
+
+      - name: Check Changelog
+        run: |
+          set -euo pipefail
+          version="$(cat ./.version)"
+
+          if [ ! -f CHANGELOG.md ]; then
+            echo "CHANGELOG.md is missing"
+            exit 1
+          fi
+
+          if ! sh ./.github/scripts/changes.sh "$version" | awk 'NF { found=1 } END { exit !found }'; then
+            echo "CHANGELOG.md has no entry for ${version}"
+            exit 1
+          fi
+
+  lint:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          cache: true
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.12.1
+
+  test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      checks: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          cache: true
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Run tests with coverage
+        run: make test-coverage
+
+      - name: Enforce coverage threshold
+        run: |
+          total=$(go tool cover -func=cover.out | awk '/^total:/ {print substr($3, 1, length($3)-1)}')
+          awk -v total="$total" 'BEGIN { if (total + 0 < 92) { exit 1 } }'
+
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: |
+            cover.out
+            cover_full.out
+            cobertura.xml
+            report.xml
+
+      - name: Publish test report
+        uses: dorny/test-reporter@v2
+        if: success() || failure()
+        with:
+          name: Go Tests
+          path: report.xml
+          reporter: java-junit
+
+      - name: Publish Cobertura summary
+        uses: irongut/CodeCoverageSummary@v1.3.0
+        with:
+          filename: cobertura.xml
+          badge: true
+          format: markdown
+          output: both
+
+      - name: Add Coverage PR Comment
+        uses: marocchino/sticky-pull-request-comment@v2
+        if: github.event_name == 'pull_request'
+        with:
+          recreate: true
+          path: code-coverage-results.md

@@ -1,0 +1,10 @@
+.idea/
+bin/
+dist/
+vendor/
+
+coverage.out
+report.xml
+cobertura.xml
+cover.out
+cover_full.out
