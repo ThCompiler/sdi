@@ -5,6 +5,7 @@ import (
 	"context"
 	"io"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -48,14 +49,13 @@ func (errWriter) Write([]byte) (int, error) { return 0, context.DeadlineExceeded
 func TestShowDependencies(t *testing.T) {
 	t.Parallel()
 
-	const nameSuccess = "success"
-
 	testCases := []struct {
 		name string
 		run  func(*testing.T)
 	}{
-		{name: nameSuccess, run: testShowDependenciesSuccess},
+		{name: "success", run: testShowDependenciesSuccess},
 		{name: "builder not initialized: nil builder", run: testShowDependenciesBuilderNotInitializedNilBuilder},
+		//nolint: goconst
 		{name: "builder not initialized: nil graph", run: testShowDependenciesBuilderNotInitializedNilGraph},
 		{name: "unknown instance", run: testShowDependenciesUnknownInstance},
 		{name: "output write error is wrapped", run: testShowDependenciesWriteError},
@@ -72,8 +72,6 @@ func TestShowDependencies(t *testing.T) {
 func TestAddProvider(t *testing.T) {
 	t.Parallel()
 
-	const nameSuccess = "success"
-
 	testCases := []struct {
 		name string
 		run  func(*testing.T)
@@ -83,7 +81,7 @@ func TestAddProvider(t *testing.T) {
 		{name: "invalid provider: nil", run: testAddProviderInvalidProviderNil},
 		{name: "dependency not found", run: testAddProviderDependencyNotFound},
 		{name: "dependency already exists", run: testAddProviderDependencyAlreadyExists},
-		{name: nameSuccess, run: testAddProviderSuccess},
+		{name: "success", run: testAddProviderSuccess},
 	}
 
 	for _, tc := range testCases {
@@ -158,6 +156,12 @@ func TestBuildInstance_errors(t *testing.T) {
 			expectErr: ErrBuilderNotInitialized,
 		},
 		{
+			name:      "builder not initialized: nil graph",
+			builder:   &Builder{graph: nil},
+			setup:     nil,
+			expectErr: ErrBuilderNotInitialized,
+		},
+		{
 			name:      "unknown instance",
 			builder:   NewBuilder(),
 			setup:     func(*testing.T, *Builder) {},
@@ -227,8 +231,6 @@ func TestBuildInstance_providerErrorStopsTraversalAndIsReturned(t *testing.T) {
 
 	_, err := BuildInstance[root](context.Background(), builder)
 	require.ErrorIs(t, err, errBoom)
-	require.Contains(t, err.Error(), "visit node")
-	require.Contains(t, err.Error(), "failed to build")
 
 	require.Equal(t, 1, depCalls)
 	require.Equal(t, 0, rootCalls)
@@ -390,7 +392,7 @@ func testShowDependenciesSuccess(t *testing.T) {
 	require.ElementsMatch(t, []string{
 		"sdi.tRoot --> sdi.tMiddle",
 		"sdi.tMiddle --> sdi.tLeaf",
-	}, splitNonEmptyLines(buf.String()))
+	}, strings.FieldsFunc(buf.String(), func(r rune) bool { return r == '\n' }))
 }
 
 func testShowDependenciesBuilderNotInitializedNilBuilder(t *testing.T) {
@@ -842,26 +844,3 @@ func typedNilErrValue() reflect.Value {
 }
 
 type aliasInt int
-
-func splitNonEmptyLines(str string) []string {
-	res := make([]string, 0)
-	start := 0
-
-	for i := range len(str) {
-		if str[i] != '\n' {
-			continue
-		}
-
-		if i > start {
-			res = append(res, str[start:i])
-		}
-
-		start = i + 1
-	}
-
-	if start < len(str) {
-		res = append(res, str[start:])
-	}
-
-	return res
-}

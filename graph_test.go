@@ -2,7 +2,9 @@ package sdi
 
 import (
 	"bytes"
+	"io"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -52,7 +54,7 @@ func TestDependencyGraph_getDependencyTree_and_WriteTo(t *testing.T) {
 	_, err = tree.WriteTo(&buf)
 	require.NoError(t, err)
 
-	lines := splitNonEmptyLines(buf.String())
+	lines := strings.FieldsFunc(buf.String(), func(r rune) bool { return r == '\n' })
 	require.ElementsMatch(t, []string{
 		"sdi.gRoot --> sdi.gMiddle",
 		"sdi.gMiddle --> sdi.gLeaf",
@@ -104,7 +106,7 @@ func TestDependencyGraph_getDependencyTreeWithTriangleDeps(t *testing.T) {
 	_, err = tree.WriteTo(&buf)
 	require.NoError(t, err)
 
-	lines := splitNonEmptyLines(buf.String())
+	lines := strings.FieldsFunc(buf.String(), func(r rune) bool { return r == '\n' })
 	require.ElementsMatch(t, []string{
 		"sdi.gRoot --> sdi.gMiddle",
 		"sdi.gRoot --> sdi.gRight",
@@ -244,4 +246,40 @@ func TestDependencyGraph_cycle_panics(t *testing.T) {
 	require.PanicsWithError(t, "type sdi.gRoot: dependency cycle detected", func() {
 		require.NoError(t, newTree(root).walkOverDependencies(func(instanceInfo) error { return nil }))
 	})
+}
+
+func TestVisit_wrapsVisitorErrorWithNodeType_andStopsTraversal(t *testing.T) {
+	t.Parallel()
+
+	leaf := &node{
+		info: instanceInfo{
+			instanceType: reflect.TypeFor[gLeaf](),
+			argsType:     reflect.TypeFor[struct{}](),
+			provider:     struct{}{},
+		},
+		dependencies: nil,
+	}
+	root := &node{
+		info: instanceInfo{
+			instanceType: reflect.TypeFor[gRoot](),
+			argsType:     reflect.TypeFor[struct{}](),
+			provider:     struct{}{},
+		},
+		dependencies: []*node{leaf},
+	}
+
+	visited := make([]string, 0, 2)
+
+	err := visit(root, func(n *node) error {
+		visited = append(visited, n.Type())
+		if n.info.instanceType == reflect.TypeFor[gLeaf]() {
+			return io.ErrUnexpectedEOF
+		}
+
+		return nil
+	})
+
+	require.ErrorIs(t, err, io.ErrUnexpectedEOF)
+	require.Contains(t, err.Error(), "visit node sdi.gLeaf")
+	require.Equal(t, []string{"sdi.gLeaf"}, visited)
 }

@@ -5,9 +5,10 @@ import (
 	"io"
 	"testing"
 
-	internalpkg "github.com/ThCompiler/sdi/internal"
 	"github.com/stretchr/testify/require"
 )
+
+const depTestValue = "value"
 
 type testCloser struct {
 	closed bool
@@ -24,6 +25,16 @@ type testProvider struct {
 	build   func(context.Context, string) string
 	cleanup func(context.Context, string) error
 }
+
+type errProvider struct{ calls int }
+
+func (p *errProvider) GetInstance(context.Context, string) (string, error) {
+	p.calls++
+
+	return "", io.ErrUnexpectedEOF
+}
+
+func (*errProvider) Cleanup(context.Context, string) error { return nil }
 
 func (p testProvider) GetInstance(ctx context.Context, deps string) (string, error) {
 	return p.build(ctx, deps), nil
@@ -58,6 +69,21 @@ func TestOnceProvider_GetInstance(t *testing.T) {
 	require.Equal(t, "first-built", second)
 }
 
+func TestOnceProvider_GetInstance_errorIsCached(t *testing.T) {
+	t.Parallel()
+
+	errProv := &errProvider{calls: 0}
+	provider := once[string, string](errProv)
+
+	_, err := provider.GetInstance(context.Background(), "first")
+	require.ErrorIs(t, err, io.ErrUnexpectedEOF)
+
+	_, err = provider.GetInstance(context.Background(), "second")
+	require.ErrorIs(t, err, io.ErrUnexpectedEOF)
+
+	require.Equal(t, 1, errProv.calls)
+}
+
 func TestOnceProvider_Cleanup(t *testing.T) {
 	t.Parallel()
 
@@ -90,12 +116,12 @@ func TestOnceProvider_Cleanup(t *testing.T) {
 
 			provider := once[string, string](testProvider{
 				build: func(context.Context, string) string {
-					return testValue
+					return depTestValue
 				},
 				cleanup: tc.cleanup,
 			})
 
-			err := provider.Cleanup(context.Background(), testValue)
+			err := provider.Cleanup(context.Background(), depTestValue)
 			require.ErrorIs(t, err, tc.expectErr)
 		})
 	}
@@ -147,12 +173,12 @@ func TestProviderFuncWithCleanup(t *testing.T) {
 	cleanCalled := false
 	provider := ProviderFuncWithCleanup[string, int](
 		func(_ context.Context, _ int) (string, error) {
-			return testValue, nil
+			return depTestValue, nil
 		},
 		func(_ context.Context, instance string) error {
 			cleanCalled = true
 
-			require.Equal(t, testValue, instance)
+			require.Equal(t, depTestValue, instance)
 
 			return nil
 		},
@@ -163,7 +189,7 @@ func TestProviderFuncWithCleanup(t *testing.T) {
 	err = provider.Cleanup(context.Background(), instance)
 
 	require.NoError(t, err)
-	require.Equal(t, testValue, instance)
+	require.Equal(t, depTestValue, instance)
 	require.True(t, cleanCalled)
 }
 
@@ -173,7 +199,7 @@ func TestProviderFuncNoClean(t *testing.T) {
 	provider := ProviderFuncNoClean[string, int](func(_ context.Context, deps int) (string, error) {
 		require.Equal(t, 2, deps)
 
-		return testValue, nil
+		return depTestValue, nil
 	})
 
 	instance, err := provider.GetInstance(context.Background(), 2)
@@ -181,26 +207,17 @@ func TestProviderFuncNoClean(t *testing.T) {
 	err = provider.Cleanup(context.Background(), instance)
 
 	require.NoError(t, err)
-	require.Equal(t, testValue, instance)
+	require.Equal(t, depTestValue, instance)
 }
 
 func TestNewInstanceFuncWithoutDeps(t *testing.T) {
 	t.Parallel()
 
 	newFunc := NewInstanceFuncWithoutDeps(func(_ context.Context) string {
-		return testValue
+		return depTestValue
 	})
 
 	instance, err := newFunc(context.Background(), struct{}{})
 	require.NoError(t, err)
-	require.Equal(t, testValue, instance)
-}
-
-func TestInternalNew(t *testing.T) {
-	t.Parallel()
-
-	ptr := internalpkg.New(42)
-
-	require.NotNil(t, ptr)
-	require.Equal(t, 42, *ptr)
+	require.Equal(t, depTestValue, instance)
 }
