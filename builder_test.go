@@ -135,7 +135,7 @@ func testBuildInstanceStructDepsSuccess(t *testing.T) {
 
 	b := newBuilderWithLeafMiddleRoot(t)
 
-	got, err := BuildInstance[tRoot](context.Background(), b)
+	got, _, err := BuildInstance[tRoot](context.Background(), b)
 	require.NoError(t, err)
 	require.Equal(t, 42, got.mid.leaf.v)
 }
@@ -193,7 +193,7 @@ func TestBuildInstance_errors(t *testing.T) {
 				tc.setup(t, tc.builder)
 			}
 
-			_, err := BuildInstance[tLeaf](context.Background(), tc.builder)
+			_, _, err := BuildInstance[tLeaf](context.Background(), tc.builder)
 			require.ErrorIs(t, err, tc.expectErr)
 		})
 	}
@@ -229,7 +229,7 @@ func TestBuildInstance_providerErrorStopsTraversalAndIsReturned(t *testing.T) {
 		},
 	)))
 
-	_, err := BuildInstance[root](context.Background(), builder)
+	_, _, err := BuildInstance[root](context.Background(), builder)
 	require.ErrorIs(t, err, errBoom)
 
 	require.Equal(t, 1, depCalls)
@@ -247,9 +247,182 @@ func TestBuildInstance_singleValueDependency_success(t *testing.T) {
 		func(_ context.Context, dep string) (int, error) { return len(dep), nil },
 	)))
 
-	got, err := BuildInstance[int](context.Background(), builder)
+	got, _, err := BuildInstance[int](context.Background(), builder)
 	require.NoError(t, err)
 	require.Equal(t, 3, got)
+}
+
+func TestBuildInstance_success_cleansInReverseBuildOrder(t *testing.T) {
+	t.Parallel()
+
+	buildOrder, cleanupOrder := make([]string, 0, 3), make([]string, 0, 3)
+
+	type (
+		leaf   struct{}
+		middle struct{}
+		root   struct{}
+
+		middleDeps struct{ Leaf leaf }
+		rootDeps   struct{ Middle middle }
+	)
+
+	builder := NewBuilder()
+
+	require.NoError(t, AddProvider[leaf, struct{}](builder, ProviderFuncWithCleanup(
+		func(context.Context, struct{}) (leaf, error) {
+			buildOrder = append(buildOrder, "leaf")
+
+			return leaf{}, nil
+		},
+		func(context.Context, leaf) error {
+			cleanupOrder = append(cleanupOrder, "leaf")
+
+			return nil
+		},
+	)))
+	require.NoError(t, AddProvider[middle, middleDeps](builder, ProviderFuncWithCleanup(
+		func(context.Context, middleDeps) (middle, error) {
+			buildOrder = append(buildOrder, "middle")
+
+			return middle{}, nil
+		},
+		func(context.Context, middle) error {
+			cleanupOrder = append(cleanupOrder, "middle")
+
+			return nil
+		},
+	)))
+	require.NoError(t, AddProvider[root, rootDeps](builder, ProviderFuncWithCleanup(
+		func(context.Context, rootDeps) (root, error) {
+			buildOrder = append(buildOrder, "root")
+
+			return root{}, nil
+		},
+		func(context.Context, root) error {
+			cleanupOrder = append(cleanupOrder, "root")
+
+			return nil
+		},
+	)))
+
+	_, cleanup, err := BuildInstance[root](context.Background(), builder)
+	require.NoError(t, err)
+	require.NotNil(t, cleanup)
+	require.NoError(t, cleanup(context.Background()))
+
+	require.Equal(t, []string{"leaf", "middle", "root"}, buildOrder)
+	require.Equal(t, []string{"root", "middle", "leaf"}, cleanupOrder)
+}
+
+func TestBuildInstance_cleanupIsIdempotent(t *testing.T) {
+	t.Parallel()
+
+	cleanupCalls := 0
+
+	type inst struct{}
+
+	builder := NewBuilder()
+	require.NoError(t, AddProvider[inst, struct{}](builder, ProviderFuncWithCleanup(
+		func(context.Context, struct{}) (inst, error) { return inst{}, nil },
+		func(context.Context, inst) error {
+			cleanupCalls++
+
+			return nil
+		},
+	)))
+
+	_, cleanup, err := BuildInstance[inst](context.Background(), builder)
+	require.NoError(t, err)
+
+	require.NoError(t, cleanup(context.Background()))
+	require.NoError(t, cleanup(context.Background()))
+
+	require.Equal(t, 1, cleanupCalls)
+}
+
+func TestBuildInstance_buildFailure_runsCleanupForBuiltDependencies(t *testing.T) {
+	t.Parallel()
+
+	cleanupCalls := 0
+	errBoom := io.ErrUnexpectedEOF
+
+	type (
+		dep  struct{}
+		root struct{}
+		deps struct{ Dep dep }
+	)
+
+	builder := NewBuilder()
+	require.NoError(t, AddProvider[dep, struct{}](builder, ProviderFuncWithCleanup(
+		func(context.Context, struct{}) (dep, error) { return dep{}, nil },
+		func(context.Context, dep) error {
+			cleanupCalls++
+
+			return nil
+		},
+	)))
+	require.NoError(t, AddProvider[root, deps](builder, ProviderFuncNoClean(
+		func(context.Context, deps) (root, error) { return root{}, errBoom },
+	)))
+
+	_, cleanup, err := BuildInstance[root](context.Background(), builder)
+	require.ErrorIs(t, err, errBoom)
+	require.Nil(t, cleanup)
+	require.Equal(t, 1, cleanupCalls)
+}
+
+func TestBuildInstance_cleanupErrorIsReturned(t *testing.T) {
+	t.Parallel()
+
+	errBoom := io.ErrUnexpectedEOF
+
+	type inst struct{}
+
+	builder := NewBuilder()
+	require.NoError(t, AddProvider[inst, struct{}](builder, ProviderFuncWithCleanup(
+		func(context.Context, struct{}) (inst, error) { return inst{}, nil },
+		func(context.Context, inst) error { return errBoom },
+	)))
+
+	_, cleanup, err := BuildInstance[inst](context.Background(), builder)
+	require.NoError(t, err)
+
+	err = cleanup(context.Background())
+	require.ErrorIs(t, err, errBoom)
+}
+
+func TestBuildInstance_buildAndCleanupErrorsAreJoined(t *testing.T) {
+	t.Parallel()
+
+	errBuild := io.ErrUnexpectedEOF
+	errCleanup := context.Canceled
+
+	cleanupCalls := 0
+
+	type (
+		dep  struct{}
+		root struct{}
+		deps struct{ Dep dep }
+	)
+
+	builder := NewBuilder()
+	require.NoError(t, AddProvider[dep, struct{}](builder, ProviderFuncWithCleanup(
+		func(context.Context, struct{}) (dep, error) { return dep{}, nil },
+		func(context.Context, dep) error {
+			cleanupCalls++
+
+			return errCleanup
+		},
+	)))
+	require.NoError(t, AddProvider[root, deps](builder, ProviderFuncNoClean(
+		func(context.Context, deps) (root, error) { return root{}, errBuild },
+	)))
+
+	_, cleanup, err := BuildInstance[root](context.Background(), builder)
+	require.Nil(t, cleanup)
+	require.ErrorIs(t, err, errBuild)
+	require.ErrorIs(t, err, errCleanup)
+	require.Equal(t, 1, cleanupCalls)
 }
 
 type tPointerDeps struct{ Leaf tLeaf }
@@ -306,7 +479,7 @@ func testBuildInstancePointerStructDepsSuccess(t *testing.T) {
 	require.NoError(t, AddProvider[tLeaf, struct{}](builder, tLeafProvider{}))
 	require.NoError(t, AddProvider[tMiddle, *tPointerDeps](builder, tPointerProvider{}))
 
-	got, err := BuildInstance[tMiddle](context.Background(), builder)
+	got, _, err := BuildInstance[tMiddle](context.Background(), builder)
 	require.NoError(t, err)
 	require.Equal(t, 42, got.leaf.v)
 }
@@ -322,7 +495,7 @@ func testBuildInstanceEmbeddedStructDependencyUsesPromotedFields(t *testing.T) {
 	)))
 	require.NoError(t, AddProvider[tEmbeddedMiddle, tEmbeddedMiddleDeps](builder, tEmbeddedMiddleProvider{}))
 
-	got, err := BuildInstance[tEmbeddedMiddle](context.Background(), builder)
+	got, _, err := BuildInstance[tEmbeddedMiddle](context.Background(), builder)
 	require.NoError(t, err)
 	require.Equal(t, testValue, got.config.Value)
 }
@@ -340,7 +513,7 @@ func testBuildInstanceEmbeddedPointerStructDependencyUsesPromotedFields(t *testi
 		builder, tEmbeddedPointerMiddleProvider{}),
 	)
 
-	got, err := BuildInstance[tPointerEmbeddedMiddle](context.Background(), builder)
+	got, _, err := BuildInstance[tPointerEmbeddedMiddle](context.Background(), builder)
 	require.NoError(t, err)
 	require.Equal(t, testValue, got.config.Value)
 }
@@ -363,7 +536,7 @@ func testBuildInstanceInterfaceProviderCanReturnTypedNil(t *testing.T) {
 	builder := NewBuilder()
 	require.NoError(t, AddProvider[tNilIface, struct{}](builder, tNilIfaceProvider{}))
 
-	got, err := BuildInstance[tNilIface](context.Background(), builder)
+	got, _, err := BuildInstance[tNilIface](context.Background(), builder)
 	require.NoError(t, err)
 	require.Nil(t, got)
 }

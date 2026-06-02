@@ -70,41 +70,73 @@ func (ServiceProvider) GetInstance(_ context.Context, deps ServiceDeps) (Service
 func (ServiceProvider) Cleanup(context.Context, Service) error { return nil }
 
 func main() {
+	if err := run(); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func run() error {
 	ctx := context.Background()
-	builder := sdi.NewBuilder()
 
-	if err := sdi.AddProvider(builder, ConfigProvider{}); err != nil {
-		log.Fatal(err)
+	builder, err := newExampleBuilder()
+	if err != nil {
+		return err
 	}
 
-	if err := sdi.AddProvider(builder, LoggerProvider{}); err != nil {
-		log.Fatal(err)
-	}
-
-	if err := sdi.AddProvider(builder, ServiceProvider{}); err != nil {
-		log.Fatal(err)
-	}
-
-	var depsTree string
-	{
-		var buf bytesStringBuilder
-		if _, err := sdi.ShowDependencies[Service](builder, &buf); err != nil {
-			log.Fatal(err)
-		}
-
-		depsTree = buf.String()
+	depsTree, err := showDepsTree(builder)
+	if err != nil {
+		return err
 	}
 
 	fmt.Printf("Dependencies:\n%s\n", depsTree)
 
-	svc, err := sdi.BuildInstance[Service](ctx, builder)
-	if err != nil {
-		log.Fatal(err)
+	return runService(ctx, builder)
+}
+
+func newExampleBuilder() (*sdi.Builder, error) {
+	builder := sdi.NewBuilder()
+
+	if err := sdi.AddProvider(builder, ConfigProvider{}); err != nil {
+		return nil, err
 	}
 
-	if err := svc.Run(ctx); err != nil {
-		log.Fatal(err)
+	if err := sdi.AddProvider(builder, LoggerProvider{}); err != nil {
+		return nil, err
 	}
+
+	if err := sdi.AddProvider(builder, ServiceProvider{}); err != nil {
+		return nil, err
+	}
+
+	return builder, nil
+}
+
+func showDepsTree(builder *sdi.Builder) (string, error) {
+	var buf bytesStringBuilder
+
+	if _, err := sdi.ShowDependencies[Service](builder, &buf); err != nil {
+		return "", err
+	}
+
+	return buf.String(), nil
+}
+
+func runService(ctx context.Context, builder *sdi.Builder) error {
+	svc, cleanup, err := sdi.BuildInstance[Service](ctx, builder)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if cleanup == nil {
+			return
+		}
+
+		if err := cleanup(ctx); err != nil {
+			log.Printf("cleanup error: %v", err)
+		}
+	}()
+
+	return svc.Run(ctx)
 }
 
 // bytesStringBuilder is a tiny io.Writer for building strings.

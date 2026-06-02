@@ -1,3 +1,17 @@
+## 0.1.0
+
+Adds cleanup lifecycle support for built instances.
+
+### Added
+
+- `BuildInstance[T]` now returns a cleanup function that runs provider cleanup in reverse build order.
+- Cleanup is also attempted for already built dependencies when instance construction fails.
+- Test coverage for cleanup order, idempotent cleanup, and joined build/cleanup errors.
+
+### Changed
+
+- Updated documentation and the example app to show the new `BuildInstance` cleanup flow.
+
 ## 0.1.0-alpha.1
 
 Initial alpha release.
@@ -12,4 +26,3 @@ Initial alpha release.
 - Example application in `./example`.
 - CI workflows for linting, build, tests, release packaging, and coverage reporting.
 - Project documentation in `README.md` and contribution guide in `CONTRIBUTING.md`.
-
