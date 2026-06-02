@@ -86,12 +86,12 @@ func BuildInstance[T any](
 
 	builtInstances, buildOrder, err := buildInstances(ctx, tree)
 	if err != nil {
-		return zero, nil, errors.Join(err, cleanupBuiltInstances(ctx, builtInstances, buildOrder))
+		return zero, nil, errors.Join(err, cleanupBuiltInstances(rollbackContext(ctx), builtInstances, buildOrder))
 	}
 
 	instance, err := extractBuiltInstance[T](expectedType, builtInstances)
 	if err != nil {
-		return zero, nil, errors.Join(err, cleanupBuiltInstances(ctx, builtInstances, buildOrder))
+		return zero, nil, errors.Join(err, cleanupBuiltInstances(rollbackContext(ctx), builtInstances, buildOrder))
 	}
 
 	return instance, onceCleanupFunc(builtInstances, buildOrder), nil
@@ -168,6 +168,10 @@ func onceCleanupFunc(
 
 		return cleanupErr
 	}
+}
+
+func rollbackContext(ctx context.Context) context.Context {
+	return context.WithoutCancel(ctx)
 }
 
 func extractValue[T any](value reflect.Value) (T, error) {

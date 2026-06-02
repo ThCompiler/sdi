@@ -371,6 +371,48 @@ func TestBuildInstance_buildFailure_runsCleanupForBuiltDependencies(t *testing.T
 	require.Equal(t, 1, cleanupCalls)
 }
 
+func TestBuildInstance_buildFailure_cleanupIgnoresCanceledBuildContext(t *testing.T) {
+	t.Parallel()
+
+	errBuild := io.ErrUnexpectedEOF
+	errCleanup := context.Canceled
+	cleanupCalls := 0
+
+	type (
+		dep  struct{}
+		root struct{}
+		deps struct{ Dep dep }
+	)
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	builder := NewBuilder()
+	require.NoError(t, AddProvider[dep, struct{}](builder, ProviderFuncWithCleanup(
+		func(context.Context, struct{}) (dep, error) { return dep{}, nil },
+		func(ctx context.Context, _ dep) error {
+			cleanupCalls++
+			if ctx.Err() != nil {
+				return errCleanup
+			}
+
+			return nil
+		},
+	)))
+	require.NoError(t, AddProvider[root, deps](builder, ProviderFuncNoClean(
+		func(context.Context, deps) (root, error) {
+			cancel()
+
+			return root{}, errBuild
+		},
+	)))
+
+	_, cleanup, err := BuildInstance[root](ctx, builder)
+	require.Nil(t, cleanup)
+	require.ErrorIs(t, err, errBuild)
+	require.NotErrorIs(t, err, errCleanup)
+	require.Equal(t, 1, cleanupCalls)
+}
+
 func TestBuildInstance_cleanupErrorIsReturned(t *testing.T) {
 	t.Parallel()
 
