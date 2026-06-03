@@ -2,20 +2,48 @@ package sdi
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"reflect"
+	"slices"
+	"sync"
+	"time"
 )
 
+const defaultCleanupTimeout = 5 * time.Second
+
+type BuilderOption func(*Builder)
+
 type Builder struct {
-	graph *dependencyGraph
+	graph          *dependencyGraph
+	cleanupTimeout time.Duration
 }
 
 // NewBuilder creates a new Builder.
 //
 // Builder is not thread-safe.
-func NewBuilder() *Builder {
-	return &Builder{graph: newDependencyGraph()}
+func NewBuilder(opts ...BuilderOption) *Builder {
+	bld := &Builder{
+		graph:          newDependencyGraph(),
+		cleanupTimeout: defaultCleanupTimeout,
+	}
+
+	for _, opt := range opts {
+		if opt != nil {
+			opt(bld)
+		}
+	}
+
+	return bld
+}
+
+func WithCleanupTimeout(timeout time.Duration) BuilderOption {
+	return func(b *Builder) {
+		if timeout > 0 {
+			b.cleanupTimeout = timeout
+		}
+	}
 }
 
 // AddProvider registers a Provider that can build the `instance` type.
@@ -58,38 +86,93 @@ func AddProvider[instance any, dependencies any](builder *Builder, provider Prov
 	)
 }
 
-// BuildInstance builds an instance of type T.
+// BuildInstance builds an instance of type T and returns a cleanup function.
 //
-// BuildInstance traverses the dependency graph for T, builds all required
-// dependencies, and returns the built instance.
+// The returned cleanup function calls Provider.Cleanup for all built instances in
+// reverse build order (dependents first). Cleanup is best-effort: it attempts to
+// clean all built instances and returns a joined error if any cleanup fails.
+// Cleanup always runs with an internal timeout-bound context configured on the
+// Builder and does not use the build context.
 //
-// Providers are wrapped with once(), so Provider.GetInstance is called at most
-// once per provider for the lifetime of the Builder.
-func BuildInstance[T any](ctx context.Context, builder *Builder) (T, error) {
+// Note: providers are wrapped with once(), so instances are cached for the
+// lifetime of the Builder. After calling cleanup, do not use the Builder again.
+//
+// If building fails after some dependencies were built, BuildInstance
+// attempts to cleanup already built instances and returns a joined error that
+// includes both the build error and cleanup errors (if any).
+func BuildInstance[T any](
+	ctx context.Context,
+	builder *Builder,
+) (T, func() error, error) {
 	var zero T
 
+	tree, expectedType, err := dependencyTreeFor[T](builder)
+	if err != nil {
+		return zero, nil, err
+	}
+
+	builtInstances, buildOrder, err := buildInstances(ctx, tree)
+	if err != nil {
+		//nolint:contextcheck // function has own context with timeout for cleanup
+		return zero, nil, errors.Join(err, builder.runCleanup(builtInstances, buildOrder))
+	}
+
+	instance, err := extractBuiltInstance[T](expectedType, builtInstances)
+	if err != nil {
+		//nolint:contextcheck // function has own context with timeout for cleanup
+		return zero, nil, errors.Join(err, builder.runCleanup(builtInstances, buildOrder))
+	}
+
+	//nolint:contextcheck // function has own context with timeout for cleanup
+	return instance, onceCleanupFunc(builder, builtInstances, buildOrder), nil
+}
+
+func dependencyTreeFor[T any](builder *Builder) (*dependencyTree, reflect.Type, error) {
 	if builder == nil || builder.graph == nil {
-		return zero, ErrBuilderNotInitialized
+		return nil, nil, ErrBuilderNotInitialized
 	}
 
 	expectedType := reflect.TypeFor[T]()
 
 	tree, err := builder.graph.getDependencyTree(expectedType)
 	if err != nil {
-		return zero, err
+		return nil, nil, err
 	}
+
+	return tree, expectedType, nil
+}
+
+func buildInstances(
+	ctx context.Context,
+	tree *dependencyTree,
+) (map[reflect.Type]reflect.Value, []instanceInfo, error) {
+	builtInstances := make(map[reflect.Type]reflect.Value)
+	buildOrder := make([]instanceInfo, 0)
 
 	var buildErr error
 
-	builtInstances := make(map[reflect.Type]reflect.Value)
-
-	if err := tree.walkOverDependencies(func(info instanceInfo) error {
+	walkErr := tree.walkOverDependencies(func(info instanceInfo) error {
 		builtInstances, buildErr = buildInstance(ctx, info, builtInstances)
+		if buildErr != nil {
+			return buildErr
+		}
 
-		return buildErr
-	}); err != nil {
-		return zero, err
+		buildOrder = append(buildOrder, info)
+
+		return nil
+	})
+	if walkErr != nil {
+		return builtInstances, buildOrder, walkErr
 	}
+
+	return builtInstances, buildOrder, nil
+}
+
+func extractBuiltInstance[T any](
+	expectedType reflect.Type,
+	builtInstances map[reflect.Type]reflect.Value,
+) (T, error) {
+	var zero T
 
 	res, ok := builtInstances[expectedType]
 	if !ok || !res.IsValid() {
@@ -97,6 +180,34 @@ func BuildInstance[T any](ctx context.Context, builder *Builder) (T, error) {
 	}
 
 	return extractValue[T](res)
+}
+
+func onceCleanupFunc(
+	builder *Builder,
+	builtInstances map[reflect.Type]reflect.Value,
+	buildOrder []instanceInfo,
+) func() error {
+	return sync.OnceValue(func() error {
+		return builder.runCleanup(builtInstances, buildOrder)
+	})
+}
+
+func (b *Builder) runCleanup(
+	builtInstances map[reflect.Type]reflect.Value,
+	buildOrder []instanceInfo,
+) error {
+	ctx, cancel := b.newCleanupContext()
+	defer cancel()
+
+	return cleanupBuiltInstances(ctx, builtInstances, buildOrder)
+}
+
+func (b *Builder) newCleanupContext() (context.Context, context.CancelFunc) {
+	if b == nil || b.cleanupTimeout <= 0 {
+		return context.WithTimeout(context.Background(), defaultCleanupTimeout)
+	}
+
+	return context.WithTimeout(context.Background(), b.cleanupTimeout)
 }
 
 func extractValue[T any](value reflect.Value) (T, error) {
@@ -116,6 +227,47 @@ func extractValue[T any](value reflect.Value) (T, error) {
 	}
 
 	return typed, nil
+}
+
+func cleanupBuiltInstances(
+	ctx context.Context,
+	builtInstances map[reflect.Type]reflect.Value,
+	buildOrder []instanceInfo,
+) error {
+	var resErr error
+
+	for _, info := range slices.Backward(buildOrder) {
+		instanceVal, ok := builtInstances[info.instanceType]
+		if !ok {
+			continue
+		}
+
+		providerVal := reflect.ValueOf(info.provider)
+		cleanup := providerVal.MethodByName("Cleanup")
+
+		if !cleanup.IsValid() {
+			resErr = errors.Join(resErr, fmt.Errorf(
+				"%w: provider for %v has no Cleanup", ErrInvalidProvider, info.instanceType,
+			))
+
+			continue
+		}
+
+		out := cleanup.Call([]reflect.Value{reflect.ValueOf(ctx), instanceVal})
+		if len(out) != 1 {
+			resErr = errors.Join(resErr, fmt.Errorf(
+				"%w: provider for %v cleanup returns %d values", ErrInvalidProvider, info.instanceType, len(out),
+			))
+
+			continue
+		}
+
+		if err := getErrorValue(out[0]); err != nil {
+			resErr = errors.Join(resErr, fmt.Errorf("cleanup %v: %w", info.instanceType, err))
+		}
+	}
+
+	return resErr
 }
 
 // ShowDependencies writes the dependency edges for T into writer.

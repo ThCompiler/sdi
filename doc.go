@@ -11,8 +11,11 @@
 // The container is built around a Builder:
 //
 //  1. Register providers with AddProvider in dependency order.
-//  2. Build a root instance with BuildInstance.
+//  2. Build a root instance with BuildInstance and call the returned cleanup
+//     function when you're done.
 //  3. Optionally render dependencies with ShowDependencies.
+//
+// Cleanup uses Builder timeout and does not accept an external context.
 //
 // Dependencies can be declared either as a struct or pointer to a struct
 // (exported fields are treated as dependencies and filled by type) or as a

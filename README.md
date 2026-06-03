@@ -20,8 +20,16 @@ High level flow:
 
 1. Create a builder: `b := sdi.NewBuilder()`
 2. Register providers with `sdi.AddProvider` in dependency order.
-3. Build a root instance with `sdi.BuildInstance[T]`.
+3. Build a root instance with `sdi.BuildInstance[T]` and call the returned cleanup function when you're done.
 4. (Optional) Print the dependency tree with `sdi.ShowDependencies[T]`.
+
+Cleanup uses an internal timeout-bound context configured on the builder. To override the default:
+
+```go
+b := sdi.NewBuilder(sdi.WithCleanupTimeout(10 * time.Second))
+```
+
+The returned cleanup function uses this internal timeout and does not accept an external context.
 
 ### Providers and dependencies
 
