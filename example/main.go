@@ -131,7 +131,7 @@ func runService(ctx context.Context, builder *sdi.Builder) error {
 			return
 		}
 
-		if err := cleanup(ctx); err != nil {
+		if err := cleanup(); err != nil {
 			log.Printf("cleanup error: %v", err)
 		}
 	}()

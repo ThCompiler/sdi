@@ -15,6 +15,8 @@
 //     function when you're done.
 //  3. Optionally render dependencies with ShowDependencies.
 //
+// Cleanup uses Builder timeout and does not accept an external context.
+//
 // Dependencies can be declared either as a struct or pointer to a struct
 // (exported fields are treated as dependencies and filled by type) or as a
 // single value type. Promoted exported fields from embedded structs are treated

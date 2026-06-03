@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -157,7 +158,7 @@ func TestBuildInstance_errors(t *testing.T) {
 		},
 		{
 			name:      "builder not initialized: nil graph",
-			builder:   &Builder{graph: nil},
+			builder:   &Builder{graph: nil, cleanupTimeout: 0},
 			setup:     nil,
 			expectErr: ErrBuilderNotInitialized,
 		},
@@ -308,7 +309,7 @@ func TestBuildInstance_success_cleansInReverseBuildOrder(t *testing.T) {
 	_, cleanup, err := BuildInstance[root](context.Background(), builder)
 	require.NoError(t, err)
 	require.NotNil(t, cleanup)
-	require.NoError(t, cleanup(context.Background()))
+	require.NoError(t, cleanup())
 
 	require.Equal(t, []string{"leaf", "middle", "root"}, buildOrder)
 	require.Equal(t, []string{"root", "middle", "leaf"}, cleanupOrder)
@@ -334,8 +335,8 @@ func TestBuildInstance_cleanupIsIdempotent(t *testing.T) {
 	_, cleanup, err := BuildInstance[inst](context.Background(), builder)
 	require.NoError(t, err)
 
-	require.NoError(t, cleanup(context.Background()))
-	require.NoError(t, cleanup(context.Background()))
+	require.NoError(t, cleanup())
+	require.NoError(t, cleanup())
 
 	require.Equal(t, 1, cleanupCalls)
 }
@@ -371,7 +372,7 @@ func TestBuildInstance_buildFailure_runsCleanupForBuiltDependencies(t *testing.T
 	require.Equal(t, 1, cleanupCalls)
 }
 
-func TestBuildInstance_buildFailure_cleanupIgnoresCanceledBuildContext(t *testing.T) {
+func TestBuildInstance_buildFailure_cleanupUsesInternalContext(t *testing.T) {
 	t.Parallel()
 
 	errBuild := io.ErrUnexpectedEOF
@@ -391,6 +392,7 @@ func TestBuildInstance_buildFailure_cleanupIgnoresCanceledBuildContext(t *testin
 		func(context.Context, struct{}) (dep, error) { return dep{}, nil },
 		func(ctx context.Context, _ dep) error {
 			cleanupCalls++
+
 			if ctx.Err() != nil {
 				return errCleanup
 			}
@@ -413,6 +415,30 @@ func TestBuildInstance_buildFailure_cleanupIgnoresCanceledBuildContext(t *testin
 	require.Equal(t, 1, cleanupCalls)
 }
 
+func TestBuildInstance_cleanupUsesBuilderTimeout(t *testing.T) {
+	t.Parallel()
+
+	timeout := 10 * time.Millisecond
+
+	type inst struct{}
+
+	builder := NewBuilder(WithCleanupTimeout(timeout))
+	require.NoError(t, AddProvider[inst, struct{}](builder, ProviderFuncWithCleanup(
+		func(context.Context, struct{}) (inst, error) { return inst{}, nil },
+		func(ctx context.Context, _ inst) error {
+			<-ctx.Done()
+
+			return ctx.Err()
+		},
+	)))
+
+	_, cleanup, err := BuildInstance[inst](context.Background(), builder)
+	require.NoError(t, err)
+
+	err = cleanup()
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+}
+
 func TestBuildInstance_cleanupErrorIsReturned(t *testing.T) {
 	t.Parallel()
 
@@ -429,7 +455,7 @@ func TestBuildInstance_cleanupErrorIsReturned(t *testing.T) {
 	_, cleanup, err := BuildInstance[inst](context.Background(), builder)
 	require.NoError(t, err)
 
-	err = cleanup(context.Background())
+	err = cleanup()
 	require.ErrorIs(t, err, errBoom)
 }
 
@@ -622,7 +648,7 @@ func testShowDependenciesBuilderNotInitializedNilBuilder(t *testing.T) {
 func testShowDependenciesBuilderNotInitializedNilGraph(t *testing.T) {
 	t.Helper()
 
-	b := &Builder{graph: nil}
+	b := &Builder{graph: nil, cleanupTimeout: 0}
 
 	var buf bytes.Buffer
 
@@ -661,7 +687,7 @@ func testAddProviderBuilderNotInitializedNilBuilder(t *testing.T) {
 func testAddProviderBuilderNotInitializedNilGraph(t *testing.T) {
 	t.Helper()
 
-	b := &Builder{graph: nil}
+	b := &Builder{graph: nil, cleanupTimeout: 0}
 	err := AddProvider[tLeaf, struct{}](b, tLeafProvider{})
 	require.ErrorIs(t, err, ErrBuilderNotInitialized)
 }

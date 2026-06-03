@@ -8,17 +8,42 @@ import (
 	"reflect"
 	"slices"
 	"sync"
+	"time"
 )
 
+const defaultCleanupTimeout = 5 * time.Second
+
+type BuilderOption func(*Builder)
+
 type Builder struct {
-	graph *dependencyGraph
+	graph          *dependencyGraph
+	cleanupTimeout time.Duration
 }
 
 // NewBuilder creates a new Builder.
 //
 // Builder is not thread-safe.
-func NewBuilder() *Builder {
-	return &Builder{graph: newDependencyGraph()}
+func NewBuilder(opts ...BuilderOption) *Builder {
+	bld := &Builder{
+		graph:          newDependencyGraph(),
+		cleanupTimeout: defaultCleanupTimeout,
+	}
+
+	for _, opt := range opts {
+		if opt != nil {
+			opt(bld)
+		}
+	}
+
+	return bld
+}
+
+func WithCleanupTimeout(timeout time.Duration) BuilderOption {
+	return func(b *Builder) {
+		if timeout > 0 {
+			b.cleanupTimeout = timeout
+		}
+	}
 }
 
 // AddProvider registers a Provider that can build the `instance` type.
@@ -66,6 +91,8 @@ func AddProvider[instance any, dependencies any](builder *Builder, provider Prov
 // The returned cleanup function calls Provider.Cleanup for all built instances in
 // reverse build order (dependents first). Cleanup is best-effort: it attempts to
 // clean all built instances and returns a joined error if any cleanup fails.
+// Cleanup always runs with an internal timeout-bound context configured on the
+// Builder and does not use the build context.
 //
 // Note: providers are wrapped with once(), so instances are cached for the
 // lifetime of the Builder. After calling cleanup, do not use the Builder again.
@@ -76,7 +103,7 @@ func AddProvider[instance any, dependencies any](builder *Builder, provider Prov
 func BuildInstance[T any](
 	ctx context.Context,
 	builder *Builder,
-) (T, func(context.Context) error, error) {
+) (T, func() error, error) {
 	var zero T
 
 	tree, expectedType, err := dependencyTreeFor[T](builder)
@@ -86,15 +113,18 @@ func BuildInstance[T any](
 
 	builtInstances, buildOrder, err := buildInstances(ctx, tree)
 	if err != nil {
-		return zero, nil, errors.Join(err, cleanupBuiltInstances(rollbackContext(ctx), builtInstances, buildOrder))
+		//nolint:contextcheck // function has own context with timeout for cleanup
+		return zero, nil, errors.Join(err, builder.runCleanup(builtInstances, buildOrder))
 	}
 
 	instance, err := extractBuiltInstance[T](expectedType, builtInstances)
 	if err != nil {
-		return zero, nil, errors.Join(err, cleanupBuiltInstances(rollbackContext(ctx), builtInstances, buildOrder))
+		//nolint:contextcheck // function has own context with timeout for cleanup
+		return zero, nil, errors.Join(err, builder.runCleanup(builtInstances, buildOrder))
 	}
 
-	return instance, onceCleanupFunc(builtInstances, buildOrder), nil
+	//nolint:contextcheck // function has own context with timeout for cleanup
+	return instance, onceCleanupFunc(builder, builtInstances, buildOrder), nil
 }
 
 func dependencyTreeFor[T any](builder *Builder) (*dependencyTree, reflect.Type, error) {
@@ -153,25 +183,31 @@ func extractBuiltInstance[T any](
 }
 
 func onceCleanupFunc(
+	builder *Builder,
 	builtInstances map[reflect.Type]reflect.Value,
 	buildOrder []instanceInfo,
-) func(context.Context) error {
-	var (
-		cleanupOnce sync.Once
-		cleanupErr  error
-	)
-
-	return func(ctx context.Context) error {
-		cleanupOnce.Do(func() {
-			cleanupErr = cleanupBuiltInstances(ctx, builtInstances, buildOrder)
-		})
-
-		return cleanupErr
-	}
+) func() error {
+	return sync.OnceValue(func() error {
+		return builder.runCleanup(builtInstances, buildOrder)
+	})
 }
 
-func rollbackContext(ctx context.Context) context.Context {
-	return context.WithoutCancel(ctx)
+func (b *Builder) runCleanup(
+	builtInstances map[reflect.Type]reflect.Value,
+	buildOrder []instanceInfo,
+) error {
+	ctx, cancel := b.newCleanupContext()
+	defer cancel()
+
+	return cleanupBuiltInstances(ctx, builtInstances, buildOrder)
+}
+
+func (b *Builder) newCleanupContext() (context.Context, context.CancelFunc) {
+	if b == nil || b.cleanupTimeout <= 0 {
+		return context.WithTimeout(context.Background(), defaultCleanupTimeout)
+	}
+
+	return context.WithTimeout(context.Background(), b.cleanupTimeout)
 }
 
 func extractValue[T any](value reflect.Value) (T, error) {
