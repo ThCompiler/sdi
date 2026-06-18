@@ -325,47 +325,47 @@ func buildInstance(
 	ctx context.Context,
 	info instanceInfo,
 	deps resolvedDependencies,
-	builtInstances builtInstances,
+	bis builtInstances,
 ) (builtInstances, error) {
-	if _, exists := builtInstances[info.instanceType]; exists {
-		return builtInstances, nil
+	if _, exists := bis[info.instanceType]; exists {
+		return bis, nil
 	}
 
 	providerVal := reflect.ValueOf(info.provider)
 
 	getInstance := providerVal.MethodByName("GetInstance")
 	if !getInstance.IsValid() {
-		return builtInstances, fmt.Errorf(
+		return bis, fmt.Errorf(
 			"%w: provider for %v has no GetInstance", ErrInvalidProvider, info.instanceType,
 		)
 	}
 
-	depsArg, err := buildDependenciesArg(info.argsType, deps, builtInstances)
+	depsArg, err := buildDependenciesArg(info.argsType, deps, bis)
 	if err != nil {
-		return builtInstances, err
+		return bis, err
 	}
 
 	out := getInstance.Call([]reflect.Value{reflect.ValueOf(ctx), depsArg})
 	if len(out) != 2 {
-		return builtInstances, fmt.Errorf(
+		return bis, fmt.Errorf(
 			"%w: provider for %v returns %d values", ErrInvalidProvider, info.instanceType, len(out),
 		)
 	}
 
 	instVal, err := getResult(out, info.instanceType)
 	if err != nil {
-		return builtInstances, err
+		return bis, err
 	}
 
-	builtInstances.add(info.instanceType, instVal)
+	bis.add(info.instanceType, instVal)
 
-	return builtInstances, nil
+	return bis, nil
 }
 
 func buildDependenciesArg(
 	argsType reflect.Type,
 	deps resolvedDependencies,
-	builtInstances builtInstances,
+	bis builtInstances,
 ) (reflect.Value, error) {
 	underlyingType := argsType
 	isPointer := argsType.Kind() == reflect.Pointer
@@ -375,7 +375,7 @@ func buildDependenciesArg(
 	}
 
 	if underlyingType.Kind() == reflect.Struct {
-		value, err := fillStructDependencies(underlyingType, deps, builtInstances)
+		value, err := fillStructDependencies(underlyingType, deps, bis)
 		if err != nil {
 			return reflect.Value{}, err
 		}
@@ -387,16 +387,16 @@ func buildDependenciesArg(
 		return value, nil
 	}
 
-	return builtInstances.getValue(argsType, deps)
+	return bis.getValue(argsType, deps)
 }
 
 func fillStructDependencies(
 	dependenciesType reflect.Type,
 	deps resolvedDependencies,
-	builtInstances builtInstances,
+	bis builtInstances,
 ) (reflect.Value, error) {
 	return processDependenciesStruct(dependenciesType, func(fieldValue reflect.Value) error {
-		depVal, err := builtInstances.getValue(fieldValue.Type(), deps)
+		depVal, err := bis.getValue(fieldValue.Type(), deps)
 		if err != nil {
 			return err
 		}

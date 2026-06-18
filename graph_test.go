@@ -286,13 +286,17 @@ func TestVisit_wrapsVisitorErrorWithNodeType_andStopsTraversal(t *testing.T) {
 	require.Equal(t, []string{"sdi.gLeaf"}, visited)
 }
 
+type gGreeter interface {
+	Hello() string
+}
+
 type gIfaceImpl struct{}
 
-func (gIfaceImpl) Greet() string { return "impl" }
+func (gIfaceImpl) Hello() string { return "impl" }
 
 type gIfaceImplAlt struct{}
 
-func (gIfaceImplAlt) Greet() string { return "alt" }
+func (gIfaceImplAlt) Hello() string { return "alt" }
 
 func TestDependencyGraph_addInstance_resolvesInterfaceDependency(t *testing.T) {
 	t.Parallel()
@@ -310,16 +314,16 @@ func TestDependencyGraph_addInstance_resolvesInterfaceDependency(t *testing.T) {
 	rootInfo := instanceInfo{
 		instanceType: reflect.TypeFor[gRoot](),
 		argsType: reflect.TypeFor[struct {
-			Dep tGreeter
+			Dep gGreeter
 		}](),
 		provider: struct{}{},
 	}
 
-	require.NoError(t, graph.addInstance(rootInfo, []reflect.Type{reflect.TypeFor[tGreeter]()}))
+	require.NoError(t, graph.addInstance(rootInfo, []reflect.Type{reflect.TypeFor[gGreeter]()}))
 
 	rootNode := graph.nodes[rootInfo.instanceType]
 	require.Len(t, rootNode.dependencies, 1)
-	require.Equal(t, reflect.TypeFor[tGreeter](), rootNode.dependencies[0].depType)
+	require.Equal(t, reflect.TypeFor[gGreeter](), rootNode.dependencies[0].depType)
 	require.Equal(t, reflect.TypeFor[gIfaceImpl](), rootNode.dependencies[0].target.info.instanceType)
 }
 
@@ -348,11 +352,11 @@ func TestDependencyGraph_addInstance_ambiguousInterfaceDependency(t *testing.T) 
 		instanceInfo{
 			instanceType: reflect.TypeFor[gRoot](),
 			argsType: reflect.TypeFor[struct {
-				Dep tGreeter
+				Dep gGreeter
 			}](),
 			provider: struct{}{},
 		},
-		[]reflect.Type{reflect.TypeFor[tGreeter]()},
+		[]reflect.Type{reflect.TypeFor[gGreeter]()},
 	)
 	require.ErrorIs(t, err, ErrAmbiguousDependency)
 }

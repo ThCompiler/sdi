@@ -100,7 +100,13 @@ func (g *dependencyGraph) resolveDependencyNode(dependencyType reflect.Type) (*n
 		}
 
 		if match != nil {
-			return nil, ErrAmbiguousDependency
+			return nil, fmt.Errorf(
+				"%w: interface %v matches both %v and %v",
+				ErrAmbiguousDependency,
+				dependencyType,
+				match.info.instanceType,
+				candidate.info.instanceType,
+			)
 		}
 
 		match = candidate

@@ -744,7 +744,7 @@ func TestBuildInstance_invalidProviderWithoutGetInstance(t *testing.T) {
 		instanceType: reflect.TypeFor[string](),
 		argsType:     reflect.TypeFor[struct{}](),
 		provider:     struct{}{},
-	}, nil, map[reflect.Type]reflect.Value{})
+	}, nil, builtInstances{})
 
 	require.ErrorIs(t, err, ErrInvalidProvider)
 }
@@ -760,7 +760,7 @@ func TestBuildInstance_invalidProviderWrongType(t *testing.T) {
 		instanceType: reflect.TypeFor[string](),
 		argsType:     reflect.TypeFor[struct{}](),
 		provider:     provider,
-	}, nil, map[reflect.Type]reflect.Value{})
+	}, nil, builtInstances{})
 
 	require.ErrorIs(t, err, ErrInvalidProvider)
 }
@@ -768,14 +768,14 @@ func TestBuildInstance_invalidProviderWrongType(t *testing.T) {
 func TestBuildDependenciesArg_missingSingleDependency(t *testing.T) {
 	t.Parallel()
 
-	_, err := buildDependenciesArg(reflect.TypeFor[string](), nil, map[reflect.Type]reflect.Value{})
+	_, err := buildDependenciesArg(reflect.TypeFor[string](), nil, builtInstances{})
 	require.ErrorIs(t, err, ErrInvalidDependencyValue)
 }
 
 func TestFillStructDependencies_missingDependency(t *testing.T) {
 	t.Parallel()
 
-	_, err := fillStructDependencies(reflect.TypeFor[struct{ Value string }](), nil, map[reflect.Type]reflect.Value{})
+	_, err := fillStructDependencies(reflect.TypeFor[struct{ Value string }](), nil, builtInstances{})
 	require.ErrorIs(t, err, ErrInvalidDependencyValue)
 }
 
