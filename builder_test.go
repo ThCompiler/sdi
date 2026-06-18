@@ -81,6 +81,7 @@ func TestAddProvider(t *testing.T) {
 		{name: "builder not initialized: nil graph", run: testAddProviderBuilderNotInitializedNilGraph},
 		{name: "invalid provider: nil", run: testAddProviderInvalidProviderNil},
 		{name: "dependency not found", run: testAddProviderDependencyNotFound},
+		{name: "interface dependency ambiguity", run: testAddProviderInterfaceDependencyAmbiguous},
 		{name: "dependency already exists", run: testAddProviderDependencyAlreadyExists},
 		{name: "success", run: testAddProviderSuccess},
 	}
@@ -119,6 +120,14 @@ func TestBuildInstance_success(t *testing.T) {
 		{
 			name: "interface provider can return typed nil",
 			run:  testBuildInstanceInterfaceProviderCanReturnTypedNil,
+		},
+		{
+			name: "interface dependencies resolve to concrete provider",
+			run:  testBuildInstanceInterfaceDependencyUsesConcreteProvider,
+		},
+		{
+			name: "exact interface provider wins over auto-resolve",
+			run:  testBuildInstanceInterfaceDependencyPrefersExactProvider,
 		},
 	}
 
@@ -735,7 +744,7 @@ func TestBuildInstance_invalidProviderWithoutGetInstance(t *testing.T) {
 		instanceType: reflect.TypeFor[string](),
 		argsType:     reflect.TypeFor[struct{}](),
 		provider:     struct{}{},
-	}, map[reflect.Type]reflect.Value{})
+	}, nil, map[reflect.Type]reflect.Value{})
 
 	require.ErrorIs(t, err, ErrInvalidProvider)
 }
@@ -751,7 +760,7 @@ func TestBuildInstance_invalidProviderWrongType(t *testing.T) {
 		instanceType: reflect.TypeFor[string](),
 		argsType:     reflect.TypeFor[struct{}](),
 		provider:     provider,
-	}, map[reflect.Type]reflect.Value{})
+	}, nil, map[reflect.Type]reflect.Value{})
 
 	require.ErrorIs(t, err, ErrInvalidProvider)
 }
@@ -759,15 +768,99 @@ func TestBuildInstance_invalidProviderWrongType(t *testing.T) {
 func TestBuildDependenciesArg_missingSingleDependency(t *testing.T) {
 	t.Parallel()
 
-	_, err := buildDependenciesArg(reflect.TypeFor[string](), map[reflect.Type]reflect.Value{})
+	_, err := buildDependenciesArg(reflect.TypeFor[string](), nil, map[reflect.Type]reflect.Value{})
 	require.ErrorIs(t, err, ErrInvalidDependencyValue)
 }
 
 func TestFillStructDependencies_missingDependency(t *testing.T) {
 	t.Parallel()
 
-	_, err := fillStructDependencies(reflect.TypeFor[struct{ Value string }](), map[reflect.Type]reflect.Value{})
+	_, err := fillStructDependencies(reflect.TypeFor[struct{ Value string }](), nil, map[reflect.Type]reflect.Value{})
 	require.ErrorIs(t, err, ErrInvalidDependencyValue)
+}
+
+type tGreeter interface {
+	Greet() string
+}
+
+type tGreeterImpl struct{}
+
+func (tGreeterImpl) Greet() string { return "impl" }
+
+type tGreeterImplProvider struct{}
+
+func (tGreeterImplProvider) GetInstance(context.Context, struct{}) (tGreeterImpl, error) {
+	return tGreeterImpl{}, nil
+}
+
+func (tGreeterImplProvider) Cleanup(context.Context, tGreeterImpl) error { return nil }
+
+type tGreeterImplAlt struct{}
+
+func (tGreeterImplAlt) Greet() string { return "alt" }
+
+type tGreeterImplAltProvider struct{}
+
+func (tGreeterImplAltProvider) GetInstance(context.Context, struct{}) (tGreeterImplAlt, error) {
+	return tGreeterImplAlt{}, nil
+}
+
+func (tGreeterImplAltProvider) Cleanup(context.Context, tGreeterImplAlt) error { return nil }
+
+type tGreeterExactProvider struct{}
+
+func (tGreeterExactProvider) GetInstance(context.Context, struct{}) (tGreeter, error) {
+	return tGreeterImplAlt{}, nil
+}
+
+func (tGreeterExactProvider) Cleanup(context.Context, tGreeter) error { return nil }
+
+type tGreeterConsumer struct{ msg string }
+
+type tGreeterConsumerDeps struct{ Greeter tGreeter }
+
+type tGreeterConsumerProvider struct{}
+
+func (tGreeterConsumerProvider) GetInstance(_ context.Context, deps tGreeterConsumerDeps) (tGreeterConsumer, error) {
+	return tGreeterConsumer{msg: deps.Greeter.Greet()}, nil
+}
+
+func (tGreeterConsumerProvider) Cleanup(context.Context, tGreeterConsumer) error { return nil }
+
+func testAddProviderInterfaceDependencyAmbiguous(t *testing.T) {
+	t.Helper()
+
+	b := NewBuilder()
+	require.NoError(t, AddProvider[tGreeterImpl, struct{}](b, tGreeterImplProvider{}))
+	require.NoError(t, AddProvider[tGreeterImplAlt, struct{}](b, tGreeterImplAltProvider{}))
+
+	err := AddProvider[tGreeterConsumer, tGreeterConsumerDeps](b, tGreeterConsumerProvider{})
+	require.ErrorIs(t, err, ErrAmbiguousDependency)
+}
+
+func testBuildInstanceInterfaceDependencyUsesConcreteProvider(t *testing.T) {
+	t.Helper()
+
+	b := NewBuilder()
+	require.NoError(t, AddProvider[tGreeterImpl, struct{}](b, tGreeterImplProvider{}))
+	require.NoError(t, AddProvider[tGreeterConsumer, tGreeterConsumerDeps](b, tGreeterConsumerProvider{}))
+
+	got, _, err := BuildInstance[tGreeterConsumer](context.Background(), b)
+	require.NoError(t, err)
+	require.Equal(t, "impl", got.msg)
+}
+
+func testBuildInstanceInterfaceDependencyPrefersExactProvider(t *testing.T) {
+	t.Helper()
+
+	b := NewBuilder()
+	require.NoError(t, AddProvider[tGreeterImpl, struct{}](b, tGreeterImplProvider{}))
+	require.NoError(t, AddProvider[tGreeter, struct{}](b, tGreeterExactProvider{}))
+	require.NoError(t, AddProvider[tGreeterConsumer, tGreeterConsumerDeps](b, tGreeterConsumerProvider{}))
+
+	got, _, err := BuildInstance[tGreeterConsumer](context.Background(), b)
+	require.NoError(t, err)
+	require.Equal(t, "alt", got.msg)
 }
 
 func TestGetResult_invalidValue(t *testing.T) {

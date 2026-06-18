@@ -25,6 +25,10 @@
 //
 // AddProvider requires all dependency types to be registered before the provider
 // that uses them. Registering out of order returns ErrDependencyNotFound.
+// Interface dependencies can be resolved automatically when exactly one
+// registered provider implements the interface; multiple matching providers
+// return ErrAmbiguousDependency. Root BuildInstance requests still resolve only
+// by exact registered type.
 //
 // Pointer and non-pointer types are distinct. If you need *T, register/provide
 // *T explicitly.

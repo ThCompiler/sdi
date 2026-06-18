@@ -6,6 +6,9 @@ var (
 	// ErrDependencyAlreadyExists is returned when a provider is registered for a type
 	// that is already present in the dependency graph.
 	ErrDependencyAlreadyExists = errors.New("dependency already exists")
+	// ErrAmbiguousDependency is returned when an interface dependency matches
+	// multiple registered providers.
+	ErrAmbiguousDependency = errors.New("ambiguous dependency")
 	// ErrDependencyNotFound is returned when registering a provider whose dependencies
 	// are not registered.
 	ErrDependencyNotFound = errors.New("dependency not found")

@@ -21,9 +21,13 @@ func (Logger) Printf(format string, args ...any) {
 	log.Printf(format, args...)
 }
 
+type AppLogger interface {
+	Printf(format string, args ...any)
+}
+
 type Service struct {
 	cfg Config
-	log *Logger
+	log AppLogger
 }
 
 func (s Service) Run(ctx context.Context) error {
@@ -58,7 +62,7 @@ func (LoggerProvider) Cleanup(context.Context, *Logger) error                 { 
 
 type ServiceDeps struct {
 	Cfg Config
-	Log *Logger
+	Log AppLogger
 }
 
 type ServiceProvider struct{}

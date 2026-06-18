@@ -20,6 +20,35 @@ type Builder struct {
 	cleanupTimeout time.Duration
 }
 
+type builtInstances map[reflect.Type]reflect.Value
+
+func (instances builtInstances) add(instanceType reflect.Type, value reflect.Value) {
+	instances[instanceType] = value
+}
+
+func (instances builtInstances) getBuilt(instanceType reflect.Type) (reflect.Value, error) {
+	value, ok := instances[instanceType]
+	if !ok || !value.IsValid() {
+		return reflect.Value{}, fmt.Errorf("%w: %v", ErrDependencyBuildFailed, instanceType)
+	}
+
+	return value, nil
+}
+
+func (instances builtInstances) getValue(valueType reflect.Type, deps resolvedDependencies) (reflect.Value, error) {
+	resolvedInfo, ok := deps[valueType]
+	if !ok {
+		return reflect.Value{}, fmt.Errorf("%w: dependency %v not built", ErrInvalidDependencyValue, valueType)
+	}
+
+	dep, ok := instances[resolvedInfo.instanceType]
+	if !ok {
+		return reflect.Value{}, fmt.Errorf("%w: dependency %v not built", ErrInvalidDependencyValue, valueType)
+	}
+
+	return getDepValue(dep, valueType)
+}
+
 // NewBuilder creates a new Builder.
 //
 // Builder is not thread-safe.
@@ -56,7 +85,9 @@ func WithCleanupTimeout(timeout time.Duration) BuilderOption {
 //
 // Providers must be registered in dependency order: every dependency type must
 // already be registered in builder before AddProvider is called. Otherwise
-// AddProvider returns ErrDependencyNotFound.
+// AddProvider returns ErrDependencyNotFound. Interface dependencies can be
+// resolved to a single registered implementation automatically; if multiple
+// implementations match, AddProvider returns ErrAmbiguousDependency.
 //
 // Note: pointer and non-pointer types are distinct. If your provider needs `*T`,
 // you must register/provide `*T` explicitly.
@@ -111,20 +142,20 @@ func BuildInstance[T any](
 		return zero, nil, err
 	}
 
-	builtInstances, buildOrder, err := buildInstances(ctx, tree)
+	bis, buildOrder, err := buildInstances(ctx, tree)
 	if err != nil {
 		//nolint:contextcheck // function has own context with timeout for cleanup
-		return zero, nil, errors.Join(err, builder.runCleanup(builtInstances, buildOrder))
+		return zero, nil, errors.Join(err, builder.runCleanup(bis, buildOrder))
 	}
 
-	instance, err := extractBuiltInstance[T](expectedType, builtInstances)
+	instance, err := extractBuiltInstance[T](expectedType, bis)
 	if err != nil {
 		//nolint:contextcheck // function has own context with timeout for cleanup
-		return zero, nil, errors.Join(err, builder.runCleanup(builtInstances, buildOrder))
+		return zero, nil, errors.Join(err, builder.runCleanup(bis, buildOrder))
 	}
 
 	//nolint:contextcheck // function has own context with timeout for cleanup
-	return instance, onceCleanupFunc(builder, builtInstances, buildOrder), nil
+	return instance, onceCleanupFunc(builder, bis, buildOrder), nil
 }
 
 func dependencyTreeFor[T any](builder *Builder) (*dependencyTree, reflect.Type, error) {
@@ -145,38 +176,37 @@ func dependencyTreeFor[T any](builder *Builder) (*dependencyTree, reflect.Type, 
 func buildInstances(
 	ctx context.Context,
 	tree *dependencyTree,
-) (map[reflect.Type]reflect.Value, []instanceInfo, error) {
-	builtInstances := make(map[reflect.Type]reflect.Value)
+) (builtInstances, []instanceInfo, error) {
+	bis := make(builtInstances)
 	buildOrder := make([]instanceInfo, 0)
 
-	var buildErr error
+	if err := tree.walkOverDependencies(func(info instanceInfo, deps resolvedDependencies) error {
+		var err error
 
-	walkErr := tree.walkOverDependencies(func(info instanceInfo) error {
-		builtInstances, buildErr = buildInstance(ctx, info, builtInstances)
-		if buildErr != nil {
-			return buildErr
+		bis, err = buildInstance(ctx, info, deps, bis)
+		if err != nil {
+			return err
 		}
 
 		buildOrder = append(buildOrder, info)
 
 		return nil
-	})
-	if walkErr != nil {
-		return builtInstances, buildOrder, walkErr
+	}); err != nil {
+		return bis, buildOrder, err
 	}
 
-	return builtInstances, buildOrder, nil
+	return bis, buildOrder, nil
 }
 
 func extractBuiltInstance[T any](
 	expectedType reflect.Type,
-	builtInstances map[reflect.Type]reflect.Value,
+	bis builtInstances,
 ) (T, error) {
 	var zero T
 
-	res, ok := builtInstances[expectedType]
-	if !ok || !res.IsValid() {
-		return zero, fmt.Errorf("%w: %v", ErrDependencyBuildFailed, expectedType)
+	res, err := bis.getBuilt(expectedType)
+	if err != nil {
+		return zero, err
 	}
 
 	return extractValue[T](res)
@@ -184,22 +214,22 @@ func extractBuiltInstance[T any](
 
 func onceCleanupFunc(
 	builder *Builder,
-	builtInstances map[reflect.Type]reflect.Value,
+	bis builtInstances,
 	buildOrder []instanceInfo,
 ) func() error {
 	return sync.OnceValue(func() error {
-		return builder.runCleanup(builtInstances, buildOrder)
+		return builder.runCleanup(bis, buildOrder)
 	})
 }
 
 func (b *Builder) runCleanup(
-	builtInstances map[reflect.Type]reflect.Value,
+	bis builtInstances,
 	buildOrder []instanceInfo,
 ) error {
 	ctx, cancel := b.newCleanupContext()
 	defer cancel()
 
-	return cleanupBuiltInstances(ctx, builtInstances, buildOrder)
+	return cleanupBuiltInstances(ctx, bis, buildOrder)
 }
 
 func (b *Builder) newCleanupContext() (context.Context, context.CancelFunc) {
@@ -231,14 +261,14 @@ func extractValue[T any](value reflect.Value) (T, error) {
 
 func cleanupBuiltInstances(
 	ctx context.Context,
-	builtInstances map[reflect.Type]reflect.Value,
+	bis builtInstances,
 	buildOrder []instanceInfo,
 ) error {
 	var resErr error
 
 	for _, info := range slices.Backward(buildOrder) {
-		instanceVal, ok := builtInstances[info.instanceType]
-		if !ok {
+		instanceVal, err := bis.getBuilt(info.instanceType)
+		if err != nil {
 			continue
 		}
 
@@ -292,8 +322,11 @@ func ShowDependencies[T any](builder *Builder, writer io.Writer) (int64, error) 
 }
 
 func buildInstance(
-	ctx context.Context, info instanceInfo, builtInstances map[reflect.Type]reflect.Value,
-) (map[reflect.Type]reflect.Value, error) {
+	ctx context.Context,
+	info instanceInfo,
+	deps resolvedDependencies,
+	builtInstances builtInstances,
+) (builtInstances, error) {
 	if _, exists := builtInstances[info.instanceType]; exists {
 		return builtInstances, nil
 	}
@@ -307,7 +340,7 @@ func buildInstance(
 		)
 	}
 
-	depsArg, err := buildDependenciesArg(info.argsType, builtInstances)
+	depsArg, err := buildDependenciesArg(info.argsType, deps, builtInstances)
 	if err != nil {
 		return builtInstances, err
 	}
@@ -324,12 +357,16 @@ func buildInstance(
 		return builtInstances, err
 	}
 
-	builtInstances[info.instanceType] = instVal
+	builtInstances.add(info.instanceType, instVal)
 
 	return builtInstances, nil
 }
 
-func buildDependenciesArg(argsType reflect.Type, builtInstances map[reflect.Type]reflect.Value) (reflect.Value, error) {
+func buildDependenciesArg(
+	argsType reflect.Type,
+	deps resolvedDependencies,
+	builtInstances builtInstances,
+) (reflect.Value, error) {
 	underlyingType := argsType
 	isPointer := argsType.Kind() == reflect.Pointer
 
@@ -338,7 +375,7 @@ func buildDependenciesArg(argsType reflect.Type, builtInstances map[reflect.Type
 	}
 
 	if underlyingType.Kind() == reflect.Struct {
-		value, err := fillStructDependencies(underlyingType, builtInstances)
+		value, err := fillStructDependencies(underlyingType, deps, builtInstances)
 		if err != nil {
 			return reflect.Value{}, err
 		}
@@ -350,24 +387,16 @@ func buildDependenciesArg(argsType reflect.Type, builtInstances map[reflect.Type
 		return value, nil
 	}
 
-	dep, ok := builtInstances[argsType]
-	if !ok {
-		return reflect.Value{}, fmt.Errorf("%w: dependency %v not built", ErrInvalidDependencyValue, argsType)
-	}
-
-	return getDepValue(dep, argsType)
+	return builtInstances.getValue(argsType, deps)
 }
 
 func fillStructDependencies(
-	dependenciesType reflect.Type, builtInstances map[reflect.Type]reflect.Value,
+	dependenciesType reflect.Type,
+	deps resolvedDependencies,
+	builtInstances builtInstances,
 ) (reflect.Value, error) {
 	return processDependenciesStruct(dependenciesType, func(fieldValue reflect.Value) error {
-		dep, ok := builtInstances[fieldValue.Type()]
-		if !ok {
-			return fmt.Errorf("%w: dependency %v not built", ErrInvalidDependencyValue, fieldValue.Type())
-		}
-
-		depVal, err := getDepValue(dep, fieldValue.Type())
+		depVal, err := builtInstances.getValue(fieldValue.Type(), deps)
 		if err != nil {
 			return err
 		}
