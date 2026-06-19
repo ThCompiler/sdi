@@ -1,3 +1,15 @@
+## 0.2.0
+
+### Added
+
+- Automatic interface dependency resolution when exactly one registered provider implements the requested interface.
+- Ambiguity detection for interface dependencies with `ErrAmbiguousDependency` when multiple providers match.
+- Support for promoted exported fields from embedded structs and embedded pointer-to-struct dependencies.
+
+### Changed
+
+- Clarified builder cleanup behavior and dependency registration rules in package docs and tests.
+
 ## 0.1.0
 
 Adds cleanup lifecycle support for built instances.

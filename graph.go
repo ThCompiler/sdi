@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"io"
 	"reflect"
-	"slices"
 	"strings"
 )
 
@@ -14,9 +13,16 @@ type instanceInfo struct {
 	provider     any
 }
 
+type dependencyRef struct {
+	depType reflect.Type
+	target  *node
+}
+
+type resolvedDependencies map[reflect.Type]instanceInfo
+
 type node struct {
 	info         instanceInfo
-	dependencies []*node
+	dependencies []dependencyRef
 }
 
 func (n *node) Type() string {
@@ -31,8 +37,8 @@ func (n *node) GoString() string {
 	return n.Type()
 }
 
-func (n *node) addDependency(dependencyNode *node) {
-	n.dependencies = append(n.dependencies, dependencyNode)
+func (n *node) addDependency(dependencyType reflect.Type, dependencyNode *node) {
+	n.dependencies = append(n.dependencies, dependencyRef{depType: dependencyType, target: dependencyNode})
 }
 
 // dependencyGraph is not thread-safe.
@@ -58,32 +64,59 @@ func (g *dependencyGraph) addInstance(info instanceInfo, dependenciesTypes []ref
 		return fmt.Errorf("dependency type %v: %w", info.instanceType, ErrDependencyAlreadyExists)
 	}
 
-	notFoundIndex := slices.IndexFunc(
-		dependenciesTypes, func(t reflect.Type) bool {
-			_, exists := g.nodes[t]
-
-			return !exists
-		},
-	)
-
-	if notFoundIndex != -1 {
-		return fmt.Errorf(
-			"%w: %v for type %v", ErrDependencyNotFound, dependenciesTypes[notFoundIndex], info.instanceType,
-		)
-	}
-
 	instanceNode := &node{
 		info:         info,
-		dependencies: make([]*node, 0, len(dependenciesTypes)),
+		dependencies: make([]dependencyRef, 0, len(dependenciesTypes)),
+	}
+
+	for _, dependencyType := range dependenciesTypes {
+		dependencyNode, err := g.resolveDependencyNode(dependencyType)
+		if err != nil {
+			return fmt.Errorf("%w: %v for type %v", err, dependencyType, info.instanceType)
+		}
+
+		instanceNode.addDependency(dependencyType, dependencyNode)
 	}
 
 	g.nodes[info.instanceType] = instanceNode
 
-	for _, dependencyType := range dependenciesTypes {
-		instanceNode.addDependency(g.nodes[dependencyType])
+	return nil
+}
+
+func (g *dependencyGraph) resolveDependencyNode(dependencyType reflect.Type) (*node, error) {
+	if node, exists := g.nodes[dependencyType]; exists {
+		return node, nil
 	}
 
-	return nil
+	if dependencyType.Kind() != reflect.Interface {
+		return nil, ErrDependencyNotFound
+	}
+
+	var match *node
+
+	for _, candidate := range g.nodes {
+		if !candidate.info.instanceType.Implements(dependencyType) {
+			continue
+		}
+
+		if match != nil {
+			return nil, fmt.Errorf(
+				"%w: interface %v matches both %v and %v",
+				ErrAmbiguousDependency,
+				dependencyType,
+				match.info.instanceType,
+				candidate.info.instanceType,
+			)
+		}
+
+		match = candidate
+	}
+
+	if match == nil {
+		return nil, ErrDependencyNotFound
+	}
+
+	return match, nil
 }
 
 func (g *dependencyGraph) getDependencyTree(forInstance reflect.Type) (*dependencyTree, error) {
@@ -140,7 +173,7 @@ func visit(from *node, visitor func(current *node) error) error {
 		seen[top] = grey
 
 		for _, dep := range top.dependencies {
-			clr, ok := seen[dep]
+			clr, ok := seen[dep.target]
 			switch {
 			case ok && clr == grey:
 				// The graph is acyclic by construction for successful registrations:
@@ -149,9 +182,9 @@ func visit(from *node, visitor func(current *node) error) error {
 				// be created through addInstance.
 				// This path should be unreachable, but we panic to inform the developer if the
 				// graph is constructed incorrectly and a cycle is introduced.
-				panic(fmt.Errorf("type %v: %w", dep.Type(), ErrDependencyCycle))
+				panic(fmt.Errorf("type %v: %w", dep.target.Type(), ErrDependencyCycle))
 			case !ok:
-				stack = append(stack, dep)
+				stack = append(stack, dep.target)
 			}
 		}
 	}
@@ -176,7 +209,7 @@ func (tree *dependencyTree) WriteTo(writer io.Writer) (int64, error) {
 		for _, dep := range n.dependencies {
 			buf.WriteString(n.Type())
 			buf.WriteString(" --> ")
-			buf.WriteString(dep.Type())
+			buf.WriteString(dep.target.Type())
 			buf.WriteByte('\n')
 		}
 
@@ -191,8 +224,13 @@ func (tree *dependencyTree) WriteTo(writer io.Writer) (int64, error) {
 	return int64(res), err
 }
 
-func (tree *dependencyTree) walkOverDependencies(visitor func(instanceInfo) error) error {
-	return visit(tree.root, func(n *node) error {
-		return visitor(n.info)
+func (tree *dependencyTree) walkOverDependencies(visitor func(instanceInfo, resolvedDependencies) error) error {
+	return visit(tree.root, func(current *node) error {
+		deps := make(resolvedDependencies, len(current.dependencies))
+		for _, dep := range current.dependencies {
+			deps[dep.depType] = dep.target.info
+		}
+
+		return visitor(current.info, deps)
 	})
 }

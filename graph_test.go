@@ -150,7 +150,9 @@ func TestDependencyGraph_getDependencyTree_shared_leafNode(t *testing.T) {
 	require.NotNil(t, tree)
 
 	// Leaf node should be shared between Left and Right.
-	require.Same(t, tree.root.dependencies[0].dependencies[0], tree.root.dependencies[1].dependencies[0])
+	leftLeaf := tree.root.dependencies[0].target.dependencies[0].target
+	rightLeaf := tree.root.dependencies[1].target.dependencies[0].target
+	require.Same(t, leftLeaf, rightLeaf)
 }
 
 func TestDependencyGraph_getDependencyTree_unknownInstance(t *testing.T) {
@@ -241,10 +243,10 @@ func TestDependencyGraph_cycle_panics(t *testing.T) {
 		},
 		dependencies: nil,
 	}
-	root.dependencies = []*node{root}
+	root.dependencies = []dependencyRef{{depType: reflect.TypeFor[gRoot](), target: root}}
 
 	require.PanicsWithError(t, "type sdi.gRoot: dependency cycle detected", func() {
-		require.NoError(t, newTree(root).walkOverDependencies(func(instanceInfo) error { return nil }))
+		require.NoError(t, newTree(root).walkOverDependencies(func(instanceInfo, resolvedDependencies) error { return nil }))
 	})
 }
 
@@ -265,7 +267,7 @@ func TestVisit_wrapsVisitorErrorWithNodeType_andStopsTraversal(t *testing.T) {
 			argsType:     reflect.TypeFor[struct{}](),
 			provider:     struct{}{},
 		},
-		dependencies: []*node{leaf},
+		dependencies: []dependencyRef{{depType: reflect.TypeFor[gLeaf](), target: leaf}},
 	}
 
 	visited := make([]string, 0, 2)
@@ -282,4 +284,79 @@ func TestVisit_wrapsVisitorErrorWithNodeType_andStopsTraversal(t *testing.T) {
 	require.ErrorIs(t, err, io.ErrUnexpectedEOF)
 	require.Contains(t, err.Error(), "visit node sdi.gLeaf")
 	require.Equal(t, []string{"sdi.gLeaf"}, visited)
+}
+
+type gGreeter interface {
+	Hello() string
+}
+
+type gIfaceImpl struct{}
+
+func (gIfaceImpl) Hello() string { return "impl" }
+
+type gIfaceImplAlt struct{}
+
+func (gIfaceImplAlt) Hello() string { return "alt" }
+
+func TestDependencyGraph_addInstance_resolvesInterfaceDependency(t *testing.T) {
+	t.Parallel()
+
+	graph := newDependencyGraph()
+	require.NoError(t, graph.addInstance(
+		instanceInfo{
+			instanceType: reflect.TypeFor[gIfaceImpl](),
+			argsType:     reflect.TypeFor[struct{}](),
+			provider:     struct{}{},
+		},
+		nil,
+	))
+
+	rootInfo := instanceInfo{
+		instanceType: reflect.TypeFor[gRoot](),
+		argsType: reflect.TypeFor[struct {
+			Dep gGreeter
+		}](),
+		provider: struct{}{},
+	}
+
+	require.NoError(t, graph.addInstance(rootInfo, []reflect.Type{reflect.TypeFor[gGreeter]()}))
+
+	rootNode := graph.nodes[rootInfo.instanceType]
+	require.Len(t, rootNode.dependencies, 1)
+	require.Equal(t, reflect.TypeFor[gGreeter](), rootNode.dependencies[0].depType)
+	require.Equal(t, reflect.TypeFor[gIfaceImpl](), rootNode.dependencies[0].target.info.instanceType)
+}
+
+func TestDependencyGraph_addInstance_ambiguousInterfaceDependency(t *testing.T) {
+	t.Parallel()
+
+	graph := newDependencyGraph()
+	require.NoError(t, graph.addInstance(
+		instanceInfo{
+			instanceType: reflect.TypeFor[gIfaceImpl](),
+			argsType:     reflect.TypeFor[struct{}](),
+			provider:     struct{}{},
+		},
+		nil,
+	))
+	require.NoError(t, graph.addInstance(
+		instanceInfo{
+			instanceType: reflect.TypeFor[gIfaceImplAlt](),
+			argsType:     reflect.TypeFor[struct{}](),
+			provider:     struct{}{},
+		},
+		nil,
+	))
+
+	err := graph.addInstance(
+		instanceInfo{
+			instanceType: reflect.TypeFor[gRoot](),
+			argsType: reflect.TypeFor[struct {
+				Dep gGreeter
+			}](),
+			provider: struct{}{},
+		},
+		[]reflect.Type{reflect.TypeFor[gGreeter]()},
+	)
+	require.ErrorIs(t, err, ErrAmbiguousDependency)
 }
